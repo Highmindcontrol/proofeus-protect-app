@@ -1,14 +1,13 @@
-import { Redirect } from "expo-router";
+import { Redirect, Stack } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { colors } from "@/theme/colors";
 import { useAuth } from "@/auth/context";
 
 /**
- * Point d'entrée qui redirige selon l'état de l'authentification :
- * - Non connecté → écran de bienvenue (welcome)
- * - Connecté → écran d'accueil de l'app
+ * Layout des écrans authentifiés. Si l'utilisateur n'est pas connecté,
+ * on le renvoie à l'écran de bienvenue.
  */
-export default function IndexScreen() {
+export default function AppLayout() {
   const { loading, session } = useAuth();
 
   if (loading) {
@@ -19,7 +18,17 @@ export default function IndexScreen() {
     );
   }
 
-  return session ? <Redirect href="/home" /> : <Redirect href="/welcome" />;
+  if (!session) return <Redirect href="/welcome" />;
+
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: colors.bgPrimary },
+        animation: "fade",
+      }}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
