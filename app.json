@@ -65,7 +65,8 @@
           "microphonePermission": "Proofeus a besoin du microphone pour capturer votre empreinte vocale.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true
