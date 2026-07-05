@@ -32,6 +32,8 @@ export default function HomeScreen() {
 
   const email = user?.email ?? "";
   const hasProfil = profil?.profil_type != null;
+  const enrolment = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
+  const hasVoice = Boolean(enrolment.voice);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -71,7 +73,11 @@ export default function HomeScreen() {
               status={hasProfil ? "ok" : "pending"}
               onPress={() => router.push("/profile")}
             />
-            <Item label="Empreinte vocale" status="upcoming" />
+            <Item
+              label="Empreinte vocale"
+              status={hasVoice ? "ok" : hasProfil ? "pending" : "upcoming"}
+              onPress={hasProfil ? () => router.push("/enroll/voice") : undefined}
+            />
             <Item label="Morphologie 3D" status="upcoming" />
             <Item label="Iris" status="upcoming" />
             <Item label="Paume" status="upcoming" />
@@ -84,6 +90,12 @@ export default function HomeScreen() {
             <Button
               label="Compléter mon profil"
               onPress={() => router.push("/profile")}
+              variant="primary"
+            />
+          ) : !hasVoice ? (
+            <Button
+              label="Enrôler mon empreinte vocale"
+              onPress={() => router.push("/enroll/voice")}
               variant="primary"
             />
           ) : null}
