@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 /**
  * Adaptateur Storage pour Supabase Auth qui persiste la session dans
@@ -18,11 +19,16 @@ import * as SecureStore from "expo-secure-store";
  */
 
 const CHUNK_SIZE = 1800; // Marge confortable sous les 2048 max iOS
-const isBrowser = typeof globalThis?.window !== "undefined";
+// react-native-web pollue `globalThis.window` même en mode natif iOS/Android,
+// donc `typeof window !== "undefined"` est un faux positif → utiliser Platform.
+const isWeb = Platform.OS === "web";
 
 // Log au chargement du module — sert de canari pour vérifier que Metro
 // a bien rebundlé la nouvelle version après un git pull.
-console.log("[secureStorage] module loaded — chunking v2 active");
+console.log(
+  "[secureStorage] module loaded — chunking v3, Platform.OS =",
+  Platform.OS,
+);
 
 async function clearChunks(key: string): Promise<void> {
   const countStr = await SecureStore.getItemAsync(`${key}_count`);
@@ -41,7 +47,7 @@ async function clearChunks(key: string): Promise<void> {
 
 export const secureStorage = {
   getItem: async (key: string): Promise<string | null> => {
-    if (isBrowser) return null;
+    if (isWeb) return null;
     try {
       const countStr = await SecureStore.getItemAsync(`${key}_count`);
       console.log(
@@ -93,7 +99,7 @@ export const secureStorage = {
   },
 
   setItem: async (key: string, value: string): Promise<void> => {
-    if (isBrowser) return;
+    if (isWeb) return;
     console.log(
       "[secureStorage] setItem",
       key,
@@ -128,7 +134,7 @@ export const secureStorage = {
   },
 
   removeItem: async (key: string): Promise<void> => {
-    if (isBrowser) return;
+    if (isWeb) return;
     try {
       await clearChunks(key);
     } catch (e) {
