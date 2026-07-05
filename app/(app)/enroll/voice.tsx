@@ -79,7 +79,8 @@ export default function VoiceEnrolmentScreen() {
     return () => anim.stop();
   }, [step, pulse]);
 
-  // Compteur pendant l'enregistrement (auto-stop à 5s)
+  // Compteur pendant l'enregistrement (auto-stop à 8s pour laisser
+  // le temps de lire la phrase à un rythme naturel)
   useEffect(() => {
     if (step !== "recording") {
       setElapsed(0);
@@ -89,7 +90,7 @@ export default function VoiceEnrolmentScreen() {
     const timer = setInterval(() => {
       const dt = (Date.now() - started) / 1000;
       setElapsed(dt);
-      if (dt >= 5) {
+      if (dt >= 8) {
         clearInterval(timer);
         void stopRecording();
       }
@@ -188,7 +189,7 @@ export default function VoiceEnrolmentScreen() {
               <Text style={styles.hint}>
                 Lisez-la à voix normale, comme si vous parliez à un ami.
                 Restez dans un endroit calme, sans écouteurs. Vous aurez
-                5 secondes pour terminer.
+                8 secondes pour la lire tranquillement.
               </Text>
             </Card>
             <AlertBox
@@ -220,7 +221,7 @@ export default function VoiceEnrolmentScreen() {
               <View style={styles.micDot} />
             </View>
             <Text style={styles.recordingTime}>
-              {elapsed.toFixed(1)} s / 5.0 s
+              {elapsed.toFixed(1)} s / 8.0 s
             </Text>
             <Text style={styles.recordingPhrase}>« {REFERENCE_PHRASE} »</Text>
             <Text style={styles.recordingHint}>
