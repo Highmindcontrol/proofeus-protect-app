@@ -142,6 +142,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         patch,
       );
 
+      // DEBUG : vérifie que le serveur reçoit bien le JWT — appelle
+      // whoami() qui renvoie auth.uid() côté Postgres
+      try {
+        const { data: whoamiData, error: whoamiErr } =
+          await supabase.rpc("whoami");
+        console.log(
+          "[updateProfil] server auth.uid() =",
+          whoamiData ?? "NULL",
+          "whoami error =",
+          whoamiErr?.message ?? "none",
+        );
+      } catch (e) {
+        console.log("[updateProfil] whoami threw", e);
+      }
+
+      // DEBUG : rafraîchir la session pour être sûr du token
+      const { data: sessionData } = await supabase.auth.getSession();
+      console.log(
+        "[updateProfil] session valid =",
+        Boolean(sessionData.session?.access_token),
+        "expires =",
+        sessionData.session?.expires_at,
+      );
+
       // 1) UPDATE prioritaire — la ligne existe déjà (créée par le
       //    trigger SQL ou par le backfill manuel). Simple, propre,
       //    respecte les policies RLS update.
