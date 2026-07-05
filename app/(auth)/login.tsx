@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "expo-router";
+import { Link, useLocalSearchParams } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AlertBox, Button, Field } from "@/components/ui";
@@ -12,6 +12,7 @@ import { useAuth } from "@/auth/context";
  */
 export default function LoginScreen() {
   const { signIn } = useAuth();
+  const { confirmed } = useLocalSearchParams<{ confirmed?: string }>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<
@@ -45,6 +46,13 @@ export default function LoginScreen() {
           <Text style={typography.eyebrow}>Se connecter</Text>
           <Text style={[typography.title, styles.title]}>Bon retour.</Text>
         </View>
+
+        {confirmed === "1" && status.type !== "error" ? (
+          <AlertBox
+            variant="success"
+            message="Votre email est confirmé. Connectez-vous pour continuer la construction de votre Sceau."
+          />
+        ) : null}
 
         {status.type === "error" ? (
           <AlertBox variant="error" message={status.message} />
