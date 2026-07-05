@@ -133,6 +133,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: "Non connecté" };
       }
 
+      // DEBUG : trace la session et le patch pour comprendre ce que
+      // le serveur reçoit (visible dans le terminal Expo)
+      console.log(
+        "[updateProfil] session.user.id =",
+        session.user.id,
+        "patch =",
+        patch,
+      );
+
       // 1) UPDATE prioritaire — la ligne existe déjà (créée par le
       //    trigger SQL ou par le backfill manuel). Simple, propre,
       //    respecte les policies RLS update.
@@ -142,17 +151,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq("auth_id", session.user.id)
         .select("id");
 
+      console.log(
+        "[updateProfil] UPDATE result → rows =",
+        updated?.length ?? 0,
+        "error =",
+        eUpd?.message ?? "none",
+      );
+
       if (eUpd) return { error: eUpd.message };
 
       // 2) Si aucune ligne n'a été mise à jour, la ligne n'existe pas
       //    et on la crée avec INSERT (autorisé par la policy WITH CHECK
       //    tant que auth_id = auth.uid()).
       if (!updated || updated.length === 0) {
+        console.log("[updateProfil] Aucune ligne trouvée, tentative INSERT");
         const { error: eIns } = await supabase.from("protect_users").insert({
           auth_id: session.user.id,
           email: session.user.email,
           ...patch,
         });
+        console.log("[updateProfil] INSERT error =", eIns?.message ?? "none");
         if (eIns) return { error: eIns.message };
       }
 
