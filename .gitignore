@@ -14,15 +14,14 @@ node_modules/
 dist/
 web-build/
 
-# Native builds
+# Native builds — CNG : `expo prebuild` régénère ios/ et android/ à
+# la demande, on ne les commit pas
 *.mobileprovision
 *.p12
 *.jks
 *.keystore
-android/app/build/
-ios/build/
-ios/Pods/
-ios/Podfile.lock
+/ios/
+/android/
 
 # System
 .DS_Store
