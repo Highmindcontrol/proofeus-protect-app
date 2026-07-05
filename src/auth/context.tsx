@@ -129,16 +129,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateProfil = useCallback(
     async (patch: Partial<ProtectProfil>) => {
-      if (!session?.user?.id) return { error: "Non connecté" };
+      if (!session?.user?.id || !session.user.email) {
+        return { error: "Non connecté" };
+      }
+      // Upsert plutôt que update pur : si la ligne protect_users n'a
+      // pas été créée automatiquement par le trigger SQL (cas où le
+      // trigger n'a pas été installé ou a échoué), on la crée ici.
+      // Conflit sur auth_id qui est UNIQUE.
       const { error } = await supabase
         .from("protect_users")
-        .update(patch)
-        .eq("auth_id", session.user.id);
+        .upsert(
+          {
+            auth_id: session.user.id,
+            email: session.user.email,
+            ...patch,
+          },
+          { onConflict: "auth_id" },
+        );
       if (error) return { error: error.message };
       await refreshProfil();
       return { error: null };
     },
-    [session?.user?.id, refreshProfil],
+    [session?.user?.id, session?.user?.email, refreshProfil],
   );
 
   const value = useMemo<AuthCtx>(
