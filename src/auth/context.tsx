@@ -132,21 +132,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!session?.user?.id || !session.user.email) {
         return { error: "Non connecté" };
       }
-      // Upsert plutôt que update pur : si la ligne protect_users n'a
-      // pas été créée automatiquement par le trigger SQL (cas où le
-      // trigger n'a pas été installé ou a échoué), on la crée ici.
-      // Conflit sur auth_id qui est UNIQUE.
-      const { error } = await supabase
+
+      // 1) UPDATE prioritaire — la ligne existe déjà (créée par le
+      //    trigger SQL ou par le backfill manuel). Simple, propre,
+      //    respecte les policies RLS update.
+      const { data: updated, error: eUpd } = await supabase
         .from("protect_users")
-        .upsert(
-          {
-            auth_id: session.user.id,
-            email: session.user.email,
-            ...patch,
-          },
-          { onConflict: "auth_id" },
-        );
-      if (error) return { error: error.message };
+        .update(patch)
+        .eq("auth_id", session.user.id)
+        .select("id");
+
+      if (eUpd) return { error: eUpd.message };
+
+      // 2) Si aucune ligne n'a été mise à jour, la ligne n'existe pas
+      //    et on la crée avec INSERT (autorisé par la policy WITH CHECK
+      //    tant que auth_id = auth.uid()).
+      if (!updated || updated.length === 0) {
+        const { error: eIns } = await supabase.from("protect_users").insert({
+          auth_id: session.user.id,
+          email: session.user.email,
+          ...patch,
+        });
+        if (eIns) return { error: eIns.message };
+      }
+
       await refreshProfil();
       return { error: null };
     },
