@@ -82,6 +82,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Restauration initiale de la session
     supabase.auth.getSession().then(({ data }) => {
+      console.log(
+        "[auth] initial getSession → user =",
+        data.session?.user?.id ?? "null",
+        "access_token present =",
+        Boolean(data.session?.access_token),
+      );
       setSession(data.session);
       setLoading(false);
     });
@@ -89,7 +95,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Abonnement aux changements de session (connexion/déconnexion)
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, sess) => {
+    } = supabase.auth.onAuthStateChange((event, sess) => {
+      console.log(
+        "[auth] onAuthStateChange event =",
+        event,
+        "user =",
+        sess?.user?.id ?? "null",
+        "access_token present =",
+        Boolean(sess?.access_token),
+      );
       setSession(sess);
     });
 
@@ -164,6 +178,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         Boolean(sessionData.session?.access_token),
         "expires =",
         sessionData.session?.expires_at,
+      );
+
+      // DEBUG : tenter un refresh explicite — si le refresh_token n'a
+      // jamais été persisté (SecureStore cassé), ça échouera ici
+      const { data: refreshData, error: refreshErr } =
+        await supabase.auth.refreshSession();
+      console.log(
+        "[updateProfil] refreshSession → user =",
+        refreshData.session?.user?.id ?? "null",
+        "error =",
+        refreshErr?.message ?? "none",
       );
 
       // 1) UPDATE prioritaire — la ligne existe déjà (créée par le

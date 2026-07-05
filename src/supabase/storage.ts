@@ -20,6 +20,10 @@ import * as SecureStore from "expo-secure-store";
 const CHUNK_SIZE = 1800; // Marge confortable sous les 2048 max iOS
 const isBrowser = typeof globalThis?.window !== "undefined";
 
+// Log au chargement du module — sert de canari pour vérifier que Metro
+// a bien rebundlé la nouvelle version après un git pull.
+console.log("[secureStorage] module loaded — chunking v2 active");
+
 async function clearChunks(key: string): Promise<void> {
   const countStr = await SecureStore.getItemAsync(`${key}_count`);
   if (countStr) {
@@ -40,9 +44,22 @@ export const secureStorage = {
     if (isBrowser) return null;
     try {
       const countStr = await SecureStore.getItemAsync(`${key}_count`);
+      console.log(
+        "[secureStorage] getItem",
+        key,
+        "→ countStr =",
+        countStr,
+      );
       if (!countStr) {
         // Fallback ancien format monolithique
-        return await SecureStore.getItemAsync(key);
+        const mono = await SecureStore.getItemAsync(key);
+        console.log(
+          "[secureStorage] getItem",
+          key,
+          "→ monolithique length =",
+          mono?.length ?? 0,
+        );
+        return mono;
       }
       const count = parseInt(countStr, 10);
       if (isNaN(count) || count <= 0) return null;
@@ -51,13 +68,24 @@ export const secureStorage = {
       for (let i = 0; i < count; i++) {
         const part = await SecureStore.getItemAsync(`${key}_${i}`);
         if (part === null) {
-          // Chunk manquant — storage corrompu, on nettoie et renvoie null
+          console.warn(
+            "[secureStorage] chunk manquant",
+            `${key}_${i}`,
+            "→ nettoyage",
+          );
           await clearChunks(key);
           return null;
         }
         parts.push(part);
       }
-      return parts.join("");
+      const joined = parts.join("");
+      console.log(
+        "[secureStorage] getItem",
+        key,
+        "→ reassembled length =",
+        joined.length,
+      );
+      return joined;
     } catch (e) {
       console.warn("[secureStorage] getItem failed", e);
       return null;
@@ -66,6 +94,12 @@ export const secureStorage = {
 
   setItem: async (key: string, value: string): Promise<void> => {
     if (isBrowser) return;
+    console.log(
+      "[secureStorage] setItem",
+      key,
+      "→ value length =",
+      value.length,
+    );
     try {
       // Nettoyer d'abord tout ce qui pourrait exister sous cette clé
       await clearChunks(key);
@@ -81,6 +115,13 @@ export const secureStorage = {
         await SecureStore.setItemAsync(`${key}_${i}`, chunks[i]);
       }
       await SecureStore.setItemAsync(`${key}_count`, chunks.length.toString());
+      console.log(
+        "[secureStorage] setItem",
+        key,
+        "→ persisted",
+        chunks.length,
+        "chunks",
+      );
     } catch (e) {
       console.warn("[secureStorage] setItem failed", e);
     }
