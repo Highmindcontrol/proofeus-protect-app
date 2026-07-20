@@ -1,4 +1,16 @@
-import "expo-dev-client";
+// L'import expo-dev-client est chargé de manière conditionnelle : il
+// n'existe que dans un build dev-client custom, pas dans Expo Go. On
+// enveloppe l'import dans un try pour que l'app puisse aussi tourner
+// dans Expo Go pendant les phases de test qui n'ont pas besoin d'un
+// build natif signé (utile en attendant l'ouverture du compte Apple
+// Developer et un build EAS complet).
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require("expo-dev-client");
+} catch {
+  // Expo Go — le module n'est pas fourni. Ignoré silencieusement.
+}
+
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View } from "react-native";
