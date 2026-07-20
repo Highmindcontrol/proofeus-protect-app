@@ -134,10 +134,10 @@ export default function PreuveScreen() {
               >
                 <QRCode
                   value={preuve.urlVerification}
-                  size={220}
-                  color={colors.fgPrimary}
+                  size={240}
+                  color="#000000"
                   backgroundColor="#FFFFFF"
-                  ecl="M"
+                  ecl="H"
                 />
               </View>
               {statutFinal === "verifie" ? (
