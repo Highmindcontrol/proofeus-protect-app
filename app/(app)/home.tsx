@@ -35,6 +35,9 @@ export default function HomeScreen() {
   const enrolment = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
   const hasVoice = Boolean(enrolment.voice);
   const hasFace = Boolean(enrolment.face);
+  const hasIris = Boolean(enrolment.iris);
+  const hasPalm = Boolean(enrolment.palm);
+  const enrolmentComplet = hasProfil && hasVoice && hasFace && hasIris && hasPalm;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -84,8 +87,16 @@ export default function HomeScreen() {
               status={hasFace ? "ok" : hasVoice ? "pending" : "upcoming"}
               onPress={hasVoice ? () => router.push("/enroll/face") : undefined}
             />
-            <Item label="Iris" status="upcoming" />
-            <Item label="Paume" status="upcoming" />
+            <Item
+              label="Iris"
+              status={hasIris ? "ok" : hasFace ? "pending" : "upcoming"}
+              onPress={hasFace ? () => router.push("/enroll/iris") : undefined}
+            />
+            <Item
+              label="Paume"
+              status={hasPalm ? "ok" : hasIris ? "pending" : "upcoming"}
+              onPress={hasIris ? () => router.push("/enroll/palm") : undefined}
+            />
             <Item label="Détection du vivant" status="upcoming" />
           </View>
         </Card>
@@ -109,6 +120,18 @@ export default function HomeScreen() {
               onPress={() => router.push("/enroll/face")}
               variant="primary"
             />
+          ) : !hasIris ? (
+            <Button
+              label="Enrôler mon iris"
+              onPress={() => router.push("/enroll/iris")}
+              variant="primary"
+            />
+          ) : !hasPalm ? (
+            <Button
+              label="Enrôler ma paume"
+              onPress={() => router.push("/enroll/palm")}
+              variant="primary"
+            />
           ) : (
             <Button
               label="Générer une preuve d'humanité"
@@ -116,9 +139,9 @@ export default function HomeScreen() {
               variant="primary"
             />
           )}
-          {hasProfil && hasVoice && hasFace ? (
+          {enrolmentComplet ? (
             <Button
-              label="Compléter mon enrôlement"
+              label="Revoir mon profil"
               onPress={() => router.push("/profile")}
               variant="secondary"
             />
