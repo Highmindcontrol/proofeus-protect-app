@@ -147,6 +147,11 @@ export default function HomeScreen() {
             />
           ) : null}
           <Button
+            label="Sécurité+ — contacts d'urgence, mots, alerte"
+            onPress={() => router.push("/urgence")}
+            variant="secondary"
+          />
+          <Button
             label="Tester la biométrie de l'appareil"
             onPress={() => router.push("/biometric-test")}
             variant="secondary"
