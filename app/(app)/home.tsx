@@ -109,6 +109,19 @@ export default function HomeScreen() {
               onPress={() => router.push("/enroll/face")}
               variant="primary"
             />
+          ) : (
+            <Button
+              label="Générer une preuve d'humanité"
+              onPress={() => router.push("/preuve")}
+              variant="primary"
+            />
+          )}
+          {hasProfil && hasVoice && hasFace ? (
+            <Button
+              label="Compléter mon enrôlement"
+              onPress={() => router.push("/profile")}
+              variant="secondary"
+            />
           ) : null}
           <Button
             label="Tester la biométrie de l'appareil"
