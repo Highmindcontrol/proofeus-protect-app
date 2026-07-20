@@ -1,5 +1,5 @@
 import { Link } from "expo-router";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Shield } from "@/components/Shield";
 import { Button } from "@/components/ui";
@@ -9,8 +9,19 @@ import { useRouter } from "expo-router";
 
 /**
  * Écran de bienvenue — première impression pour un utilisateur qui
- * ouvre l'app sans compte. Deux CTA : créer un compte, se connecter.
+ * ouvre l'app sans compte.
+ *
+ * Doctrine 19 juillet 2026 : plus aucune inscription n'est possible
+ * depuis l'app mobile. La création de compte se fait exclusivement sur
+ * proofeus.com/rejoindre après paiement Stripe. Le CTA « Créer mon
+ * compte » ouvre donc le navigateur système vers cette URL.
+ *
+ * L'écran signup.tsx reste dans le repo pour référence historique mais
+ * n'est plus accessible depuis un CTA visible.
  */
+
+const URL_REJOINDRE = "https://proofeus.com/rejoindre";
+
 export default function WelcomeScreen() {
   const router = useRouter();
 
@@ -36,10 +47,14 @@ export default function WelcomeScreen() {
 
         <View style={styles.bottom}>
           <Button
-            label="Créer mon compte"
-            onPress={() => router.push("/signup")}
+            label="Choisir mon forfait sur proofeus.com"
+            onPress={() => Linking.openURL(URL_REJOINDRE)}
             variant="primary"
           />
+          <Text style={styles.helper}>
+            La création de compte se fait sur le web — vous choisissez votre
+            forfait, vous payez, puis vous revenez ici pour vous connecter.
+          </Text>
           <Button
             label="J'ai déjà un compte"
             onPress={() => router.push("/login")}
@@ -84,6 +99,14 @@ const styles = StyleSheet.create({
     maxWidth: 340,
   },
   bottom: { gap: 12 },
+  helper: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    textAlign: "center",
+    paddingHorizontal: 12,
+    marginTop: -4,
+    marginBottom: 4,
+  },
   testLink: {
     alignSelf: "center",
     paddingVertical: 8,
