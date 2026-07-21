@@ -83,9 +83,15 @@ export default function UrgenceScreen() {
             setDeclenchement(true);
             try {
               const r = await declencherAlerte({ type: "bouton_manuel" });
-              setSucces(
-                `Alerte envoyée à ${r.contactsNotifies} contact${r.contactsNotifies > 1 ? "s" : ""}.`,
-              );
+              const parts: string[] = [
+                `Email envoyé à ${r.contactsNotifies} contact${r.contactsNotifies > 1 ? "s" : ""}`,
+              ];
+              if (r.smsPropose) {
+                if (r.smsResultat === "envoye") parts.push("SMS envoyés depuis votre téléphone");
+                else if (r.smsResultat === "annule") parts.push("SMS annulés (pas envoyés)");
+                else parts.push("SMS non disponibles sur cet appareil");
+              }
+              setSucces(parts.join(" · ") + ".");
             } catch (e) {
               setErreur(e instanceof Error ? e.message : String(e));
             } finally {

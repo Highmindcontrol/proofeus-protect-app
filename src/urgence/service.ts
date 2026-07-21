@@ -1,4 +1,5 @@
 import * as Location from "expo-location";
+import * as SMS from "expo-sms";
 import { supabase } from "@/supabase/client";
 
 /**
@@ -238,16 +239,52 @@ async function capturerPosition(): Promise<{
   }
 }
 
+/**
+ * Récupère le prénom (fallback nom, fallback « Un proche ») du user
+ * connecté pour personnaliser le SMS d'alerte.
+ */
+async function nomPourAlerte(userId: string): Promise<string> {
+  const { data } = await supabase
+    .from("protect_users")
+    .select("prenom, nom")
+    .eq("auth_id", userId)
+    .maybeSingle();
+  if (!data) return "Un proche";
+  const affichage = `${data.prenom ?? ""} ${data.nom ?? ""}`.trim();
+  return affichage || "Un proche";
+}
+
+/**
+ * Compose le corps du SMS envoyé aux contacts. Court pour tenir en
+ * un seul segment SMS. Renvoie explicitement vers l'email pour la
+ * position détaillée (l'email est envoyé en parallèle par le serveur).
+ */
+function corpsSmsAlerte(nomEmetteur: string, position: { latitude?: number; longitude?: number }): string {
+  const geoUrl =
+    position.latitude != null && position.longitude != null
+      ? ` Position : https://maps.google.com/?q=${position.latitude},${position.longitude}`
+      : "";
+  return (
+    `ALERTE PROOFEUS — Je viens d'activer mon bouton d'urgence via l'app Proofeus Protect. ` +
+    `Contactez-moi immediatement ou prevenez les forces de l'ordre si necessaire.${geoUrl}`
+  );
+}
+
 export async function declencherAlerte(input: {
   type: TypeDeclenchement;
   message?: string;
-}): Promise<{ alerteId: string; contactsNotifies: number }> {
+}): Promise<{
+  alerteId: string;
+  contactsNotifies: number;
+  smsPropose: boolean;
+  smsEnvoyes: boolean;
+  smsResultat: "envoye" | "annule" | "indisponible" | null;
+}> {
   const { data: session } = await supabase.auth.getSession();
   const userId = session.session?.user?.id;
   if (!userId) throw new Error("Vous devez être connecté.");
 
   const position = await capturerPosition();
-
   const contacts = await listerContacts();
   const contactsActifs = contacts.filter((c) => c.actif);
 
@@ -268,6 +305,7 @@ export async function declencherAlerte(input: {
 
   if (aErr || !alerte) throw new Error(aErr?.message ?? "Erreur création alerte.");
 
+  // 1. Emails automatiques via serveur (silencieux, ne bloque pas le flux)
   const url = `https://proofeus.com/api/urgence/declencher`;
   try {
     await fetch(url, {
@@ -283,11 +321,48 @@ export async function declencherAlerte(input: {
       }),
     });
   } catch {
-    // silencieux — la ligne alerte est créée, l'envoi de mails est
-    // idempotent et pourra être rejoué
+    // silencieux
   }
 
-  return { alerteId: alerte.id, contactsNotifies: contactsActifs.length };
+  // 2. SMS via téléphone perso de l'utilisateur — ouvre l'app Messages
+  // native avec destinataires + texte préremplis. L'utilisateur tape
+  // « Envoyer » une seule fois, les SMS partent depuis son propre
+  // numéro via son abonnement (coût zéro pour Proofeus, envoi depuis
+  // un vrai numéro personnel plus crédible qu'un sender alphanumérique).
+  const smsCibles = contactsActifs
+    .filter((c) => c.notifie_par_sms && c.telephone)
+    .map((c) => c.telephone!.trim())
+    .filter((t) => t.length > 0);
+
+  let smsPropose = false;
+  let smsEnvoyes = false;
+  let smsResultat: "envoye" | "annule" | "indisponible" | null = null;
+
+  if (smsCibles.length > 0) {
+    const dispoResult = await SMS.isAvailableAsync();
+    if (dispoResult) {
+      const nom = await nomPourAlerte(userId);
+      const message = corpsSmsAlerte(nom, position);
+      smsPropose = true;
+      try {
+        const { result } = await SMS.sendSMSAsync(smsCibles, message);
+        smsResultat = result === "sent" ? "envoye" : result === "cancelled" ? "annule" : "indisponible";
+        smsEnvoyes = result === "sent";
+      } catch {
+        smsResultat = "indisponible";
+      }
+    } else {
+      smsResultat = "indisponible";
+    }
+  }
+
+  return {
+    alerteId: alerte.id,
+    contactsNotifies: contactsActifs.length,
+    smsPropose,
+    smsEnvoyes,
+    smsResultat,
+  };
 }
 
 export async function leverAlerte(alerteId: string): Promise<void> {
