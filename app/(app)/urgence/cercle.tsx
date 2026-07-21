@@ -22,6 +22,12 @@ import {
   type Cercle,
   type MembreCercle,
 } from "@/urgence/service";
+import {
+  formaterCode,
+  genererCodeTotp,
+  secondesAvantRotation,
+  verifierCodeTotp,
+} from "@/totp/service";
 
 /**
  * Écran « Mon cercle de confiance ».
@@ -63,6 +69,14 @@ export default function CercleScreen() {
   const [editMot, setEditMot] = useState("");
   const [editIndice, setEditIndice] = useState("");
 
+  // TOTP — code rotatif à afficher + zone de vérification d'un code lu
+  const [codeTotp, setCodeTotp] = useState<string>("");
+  const [secondesRestantes, setSecondesRestantes] = useState<number>(60);
+  const [codeAVerifier, setCodeAVerifier] = useState<string>("");
+  const [resultatVerification, setResultatVerification] = useState<
+    "ok" | "ko" | null
+  >(null);
+
   const charger = useCallback(async () => {
     setChargement(true);
     try {
@@ -86,6 +100,38 @@ export default function CercleScreen() {
   useEffect(() => {
     void charger();
   }, [charger]);
+
+  // Ticker TOTP — recalcule le code toutes les secondes tant que le
+  // cercle est affiché. Le code lui-même ne change que toutes les 60s
+  // mais on met à jour le compteur pour un affichage fluide.
+  useEffect(() => {
+    const secret = cercles[0]?.totp_secret;
+    if (!secret) {
+      setCodeTotp("");
+      setSecondesRestantes(60);
+      return;
+    }
+    const maj = () => {
+      setCodeTotp(genererCodeTotp(secret));
+      setSecondesRestantes(secondesAvantRotation());
+    };
+    maj();
+    const t = setInterval(maj, 1000);
+    return () => clearInterval(t);
+  }, [cercles]);
+
+  function verifierCode() {
+    const secret = cercles[0]?.totp_secret;
+    if (!secret) return;
+    const ok = verifierCodeTotp(secret, codeAVerifier);
+    setResultatVerification(ok ? "ok" : "ko");
+    if (ok) {
+      setTimeout(() => {
+        setCodeAVerifier("");
+        setResultatVerification(null);
+      }, 3000);
+    }
+  }
 
   async function surCreation() {
     setErreur(null);
@@ -271,7 +317,7 @@ export default function CercleScreen() {
             <Card style={styles.card}>
               <Text style={typography.eyebrow}>{cercle.nom}</Text>
               <View style={styles.motBox}>
-                <Text style={styles.motLabel}>Mot commun</Text>
+                <Text style={styles.motLabel}>Mot commun (à dire de vive voix)</Text>
                 <Text style={styles.motValue}>{cercle.mot_commun}</Text>
                 {cercle.mot_commun_indice ? (
                   <Text style={styles.motIndice}>
@@ -286,6 +332,71 @@ export default function CercleScreen() {
                   variant="secondary"
                 />
               ) : null}
+            </Card>
+
+            {codeTotp ? (
+              <Card style={styles.card}>
+                <Text style={typography.eyebrow}>Code de vérification rotatif</Text>
+                <Text style={styles.hint}>
+                  Un code partagé par tous les membres du cercle, change toutes
+                  les 60 secondes. Utile pour prouver au téléphone que
+                  vous êtes bien du même cercle.
+                </Text>
+                <View style={styles.totpBox}>
+                  <Text style={styles.totpValue}>{formaterCode(codeTotp)}</Text>
+                  <View style={styles.totpJaugeTrack}>
+                    <View
+                      style={[
+                        styles.totpJaugeFill,
+                        {
+                          width: `${(secondesRestantes / 60) * 100}%`,
+                          backgroundColor:
+                            secondesRestantes < 10 ? "#f59e0b" : colors.cyan,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.totpCompteur}>
+                    Nouveau code dans {secondesRestantes}s
+                  </Text>
+                </View>
+              </Card>
+            ) : null}
+
+            <Card style={styles.card}>
+              <Text style={typography.eyebrow}>Vérifier le code d&apos;un proche</Text>
+              <Text style={styles.hint}>
+                Un membre de votre cercle vous a dit son code par téléphone ?
+                Tapez-le ici pour confirmer qu&apos;il fait bien partie du cercle.
+              </Text>
+              <Field
+                label="Code à 6 chiffres"
+                value={codeAVerifier}
+                onChangeText={(v) => {
+                  setCodeAVerifier(v.replace(/\D/g, "").slice(0, 6));
+                  setResultatVerification(null);
+                }}
+                placeholder="123456"
+                keyboardType="number-pad"
+              />
+              {resultatVerification === "ok" ? (
+                <AlertBox
+                  variant="success"
+                  message="✓ Code valide — la personne est bien membre de votre cercle."
+                />
+              ) : null}
+              {resultatVerification === "ko" ? (
+                <AlertBox
+                  variant="error"
+                  message="✗ Code invalide. Attention, cette personne ne fait probablement pas partie de votre cercle — ou le code a été mal transmis."
+                />
+              ) : null}
+              <Button
+                label="Vérifier ce code"
+                onPress={verifierCode}
+                variant="primary"
+                disabled={codeAVerifier.length !== 6}
+              />
             </Card>
 
             <Card style={styles.card}>
@@ -418,6 +529,39 @@ const styles = StyleSheet.create({
     color: colors.fgSecondary,
     marginTop: 4,
     fontStyle: "italic",
+  },
+  totpBox: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: "rgba(63,212,217,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(63,212,217,0.3)",
+    alignItems: "center",
+    gap: 12,
+  },
+  totpValue: {
+    fontSize: 42,
+    fontWeight: "800",
+    letterSpacing: 6,
+    color: colors.cyan,
+    fontVariant: ["tabular-nums"],
+  },
+  totpJaugeTrack: {
+    width: "100%",
+    height: 4,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  totpJaugeFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  totpCompteur: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    fontSize: 11,
+    fontVariant: ["tabular-nums"],
   },
   rowBetween: {
     flexDirection: "row",

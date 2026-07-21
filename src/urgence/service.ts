@@ -36,6 +36,8 @@ export type Cercle = {
   mot_commun_indice: string | null;
   createur_id: string;
   code_invitation: string;
+  totp_secret: string | null;
+  type: "personnel" | "famille" | "pro" | "autre";
   created_at: string;
 };
 
