@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
@@ -208,6 +208,40 @@ export default function PreuveScreen() {
                 proofeus.com/verify/{preuve.code.slice(0, 12)}…
               </Text>
             </View>
+
+            {statutFinal === "en_attente" ? (
+              <View style={styles.partageWrap}>
+                <View style={styles.separateur}>
+                  <View style={styles.separateurLigne} />
+                  <Text style={styles.separateurTexte}>ou à distance</Text>
+                  <View style={styles.separateurLigne} />
+                </View>
+                <Pressable
+                  onPress={async () => {
+                    try {
+                      await Share.share({
+                        message: `Je te prouve mon humanité via Proofeus. Ce lien est valable 60 secondes et à usage unique : ${preuve.urlVerification}`,
+                        url: preuve.urlVerification,
+                        title: "Preuve d'humanité Proofeus",
+                      });
+                    } catch {
+                      // ignoré silencieusement — utilisateur a annulé
+                    }
+                  }}
+                  style={({ pressed }) => [
+                    styles.partageBtn,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={styles.partageBtnLabel}>
+                    Envoyer par SMS / WhatsApp / mail
+                  </Text>
+                  <Text style={styles.partageBtnHint}>
+                    Pour prouver votre humanité à quelqu&apos;un qui n&apos;est pas devant vous
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
           </Card>
         ) : null}
 
@@ -235,8 +269,21 @@ export default function PreuveScreen() {
 
         <View style={styles.info}>
           <Text style={styles.infoTexte}>
+            <Text style={styles.infoStrong}>Comment l&apos;utiliser</Text>
+            {"\n"}·{" "}
+            <Text style={styles.infoStrong}>En personne / visio</Text> — montrez le QR à
+            scanner{"\n"}·{" "}
+            <Text style={styles.infoStrong}>À distance</Text> — envoyez le lien par SMS,
+            WhatsApp, mail{"\n"}·{" "}
+            <Text style={styles.infoStrong}>Au téléphone avec un proche</Text> — utilisez
+            plutôt le mot de votre cercle
+          </Text>
+        </View>
+
+        <View style={styles.info}>
+          <Text style={styles.infoTexte}>
             <Text style={styles.infoStrong}>Sécurité — </Text>
-            Chaque preuve est un code aléatoire de 128 bits, valable une seule fois, expiré au bout de 60 secondes. Impossible à rejouer, impossible à falsifier.
+            Code aléatoire de 128 bits, valable une seule fois, expiré au bout de 60 secondes. Impossible à rejouer, impossible à falsifier.
           </Text>
         </View>
       </ScrollView>
@@ -398,6 +445,48 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: 16,
     gap: 4,
+  },
+  partageWrap: {
+    width: "100%",
+    gap: 12,
+  },
+  separateur: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  separateurLigne: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+  },
+  separateurTexte: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    fontSize: 10,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  partageBtn: {
+    padding: 16,
+    borderRadius: 14,
+    backgroundColor: "rgba(63,212,217,0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(63,212,217,0.35)",
+    alignItems: "center",
+    gap: 4,
+  },
+  partageBtnLabel: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.cyan,
+    fontWeight: "700",
+  },
+  partageBtnHint: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    fontSize: 11,
+    textAlign: "center",
   },
   metaLabel: {
     ...typography.caption,
