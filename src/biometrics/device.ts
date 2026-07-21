@@ -38,14 +38,30 @@ export async function checkDeviceBiometricSupport(): Promise<DeviceBiometricSupp
   return { hasHardware, isEnrolled, supportedTypes };
 }
 
+/**
+ * Doctrine (21 juillet 2026) : la biométrie Proofeus DOIT être
+ * biométrique. On désactive explicitement le fallback passcode iPhone
+ * pour éviter deux problèmes :
+ *
+ * 1. iOS demande le passcode d'écran à Expo Go (app générique) avant
+ *    d'autoriser Face ID → l'app passe en background, le state React
+ *    se perd, le modal Ping disparaît sans confirmation.
+ *
+ * 2. Doctrinalement, un imposteur qui a le téléphone déverrouillé ne
+ *    doit rien pouvoir confirmer avec le passcode — l'USP Proofeus est
+ *    justement la biométrie exclusive, pas la connaissance d'un code.
+ *
+ * disableDeviceFallback: true force Face ID pur. Si Face ID échoue
+ * (mauvais visage, luminosité, etc.), l'auth retourne error au lieu
+ * de basculer sur le passcode iPhone.
+ */
 export async function authenticateDeviceBiometric(
   reason: string = "Prouvez votre humanité",
 ): Promise<{ success: boolean; error?: string }> {
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage: reason,
     cancelLabel: "Annuler",
-    fallbackLabel: "Utiliser un code",
-    disableDeviceFallback: false,
+    disableDeviceFallback: true,
   });
 
   if (result.success) {
