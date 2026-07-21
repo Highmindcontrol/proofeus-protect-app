@@ -37,12 +37,12 @@ const ETAPES: Array<{ oeil: Oeil; libelle: string; instruction: string }> = [
   {
     oeil: "gauche",
     libelle: "Œil gauche",
-    instruction: "Fermez l'œil droit. Rapprochez la caméra de votre œil gauche jusqu'à ce qu'il remplisse le cadre.",
+    instruction: "Rapprochez la caméra de votre œil gauche jusqu'à ce qu'il remplisse le cercle. Gardez l'œil grand ouvert et regardez droit vers l'objectif.",
   },
   {
     oeil: "droit",
     libelle: "Œil droit",
-    instruction: "Fermez l'œil gauche. Rapprochez la caméra de votre œil droit jusqu'à ce qu'il remplisse le cadre.",
+    instruction: "Rapprochez la caméra de votre œil droit jusqu'à ce qu'il remplisse le cercle. Gardez l'œil grand ouvert et regardez droit vers l'objectif.",
   },
 ];
 
