@@ -28,6 +28,13 @@ import {
   secondesAvantRotation,
   verifierCodeTotp,
 } from "@/totp/service";
+import {
+  envoyerPing,
+  listerPingsEntrants,
+  relirePing,
+  type Ping,
+} from "@/pings/service";
+import { PingRecuModal } from "@/components/PingRecuModal";
 
 /**
  * Écran « Mon cercle de confiance ».
@@ -76,6 +83,11 @@ export default function CercleScreen() {
   const [resultatVerification, setResultatVerification] = useState<
     "ok" | "ko" | null
   >(null);
+
+  // Pings entrants (polling toutes les 5 s) + ping sortant en attente
+  const [pingEntrant, setPingEntrant] = useState<Ping | null>(null);
+  const [pingSortant, setPingSortant] = useState<Ping | null>(null);
+  const [enEnvoiPing, setEnEnvoiPing] = useState(false);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -130,6 +142,57 @@ export default function CercleScreen() {
         setCodeAVerifier("");
         setResultatVerification(null);
       }, 3000);
+    }
+  }
+
+  // Polling des pings entrants — toutes les 5 s tant que l'écran cercle
+  // est ouvert (V0 Expo Go). En V1 dev-client on remplacera par push
+  // notifications distantes.
+  useEffect(() => {
+    let annule = false;
+    async function poll() {
+      const pings = await listerPingsEntrants();
+      if (annule) return;
+      // On affiche le plus récent qui n'est pas déjà consommé
+      if (pings.length > 0 && !pingEntrant) {
+        setPingEntrant(pings[0]);
+      }
+    }
+    void poll();
+    const t = setInterval(poll, 5000);
+    return () => {
+      annule = true;
+      clearInterval(t);
+    };
+  }, [pingEntrant]);
+
+  // Polling du ping sortant en attente pour voir la réponse
+  useEffect(() => {
+    if (!pingSortant || pingSortant.statut !== "en_attente") return;
+    const t = setInterval(async () => {
+      const maj = await relirePing(pingSortant.id);
+      if (maj && maj.statut !== "en_attente") {
+        setPingSortant(maj);
+        clearInterval(t);
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [pingSortant]);
+
+  async function surPing(destinataireUserId: string) {
+    const cercle = cercles[0];
+    if (!cercle) return;
+    setEnEnvoiPing(true);
+    try {
+      const ping = await envoyerPing({
+        cercleId: cercle.id,
+        destinataireUserId,
+      });
+      setPingSortant(ping);
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnEnvoiPing(false);
     }
   }
 
@@ -411,27 +474,87 @@ export default function CercleScreen() {
                 ) : null}
               </View>
               <View style={{ gap: 10 }}>
-                {membres.map((m) => (
-                  <View key={m.id} style={styles.membreRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.membreNom}>
-                        {m.nom ?? m.email}
-                        {m.role === "createur" ? " · créateur" : ""}
-                      </Text>
-                      <Text style={styles.membreMeta}>
-                        {m.nom ? m.email : null}
-                        {m.accepte_at ? " · accepté" : " · en attente"}
-                      </Text>
+                {membres.map((m) => {
+                  const estMoi = m.user_id === (cercle?.createur_id ?? null) && m.role === "createur";
+                  const equipe = Boolean(m.user_id);
+                  return (
+                    <View key={m.id} style={styles.membreRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.membreNom}>
+                          {m.nom ?? m.email}
+                          {m.role === "createur" ? " · créateur" : ""}
+                          {equipe ? " · ✓" : ""}
+                        </Text>
+                        <Text style={styles.membreMeta}>
+                          {m.nom ? m.email : null}
+                          {m.accepte_at ? " · accepté" : " · en attente"}
+                          {equipe ? " · Proofeus équipé" : ""}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+                        {equipe && !estMoi && m.user_id ? (
+                          <Pressable
+                            onPress={() => surPing(m.user_id!)}
+                            disabled={enEnvoiPing}
+                            hitSlop={6}
+                          >
+                            <Text style={styles.ping}>Pinger</Text>
+                          </Pressable>
+                        ) : null}
+                        {suisCreateur && m.role !== "createur" ? (
+                          <Pressable onPress={() => surRetrait(m)} hitSlop={8}>
+                            <Text style={styles.supprimer}>Retirer</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
                     </View>
-                    {suisCreateur && m.role !== "createur" ? (
-                      <Pressable onPress={() => surRetrait(m)} hitSlop={8}>
-                        <Text style={styles.supprimer}>Retirer</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             </Card>
+
+            {/* Résultat d'un ping sortant (émetteur) */}
+            {pingSortant ? (
+              <Card
+                style={{
+                  ...styles.card,
+                  ...(pingSortant.statut === "confirme" ? styles.cardOk : {}),
+                  ...(pingSortant.statut === "refuse" ? styles.cardKo : {}),
+                }}
+              >
+                <Text style={typography.eyebrow}>
+                  Ping envoyé
+                </Text>
+                {pingSortant.statut === "en_attente" ? (
+                  <Text style={styles.pingStatut}>
+                    En attente de réponse… Le destinataire doit valider avec
+                    Face ID sur son téléphone.
+                  </Text>
+                ) : null}
+                {pingSortant.statut === "confirme" ? (
+                  <Text style={[styles.pingStatut, { color: colors.emerald }]}>
+                    ✓ Confirmé avec Face ID — c&apos;est bien votre proche.
+                  </Text>
+                ) : null}
+                {pingSortant.statut === "refuse" ? (
+                  <Text style={[styles.pingStatut, { color: "#dc2626" }]}>
+                    ✗ Refusé par le destinataire — méfiance, ce n&apos;est
+                    peut-être pas la personne que vous croyez.
+                  </Text>
+                ) : null}
+                {pingSortant.statut === "expire" ? (
+                  <Text style={styles.pingStatut}>
+                    Ping expiré sans réponse. Peut-être que la personne
+                    n&apos;a pas vu la notification.
+                  </Text>
+                ) : null}
+                <Button
+                  label="Fermer"
+                  onPress={() => setPingSortant(null)}
+                  variant="secondary"
+                />
+              </Card>
+            ) : null}
 
             {invitAjout ? (
               <Card style={styles.card}>
@@ -468,11 +591,17 @@ export default function CercleScreen() {
 
             <AlertBox
               variant="info"
-              message="Le mot commun s'utilise verbalement — au téléphone, en visio, en personne. Demandez « quel est le mot de notre cercle ? » à quiconque prétend être un proche. Le vrai le connaît, l'imposteur non."
+              message="Trois défenses complémentaires : le PING avec Face ID (le plus fort, réseau requis), le CODE ROTATIF (marche sans réseau), le MOT COMMUN à dire de vive voix. L'imposteur ne peut passer aucune des trois."
             />
           </>
         )}
       </ScrollView>
+
+      <PingRecuModal
+        ping={pingEntrant}
+        onRepondu={() => setPingEntrant(null)}
+        onFerme={() => setPingEntrant(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -562,6 +691,26 @@ const styles = StyleSheet.create({
     color: colors.fgTertiary,
     fontSize: 11,
     fontVariant: ["tabular-nums"],
+  },
+  ping: {
+    ...typography.caption,
+    color: colors.cyan,
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  pingStatut: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.fgSecondary,
+    lineHeight: 20,
+  },
+  cardOk: {
+    borderWidth: 1,
+    borderColor: colors.emerald,
+  },
+  cardKo: {
+    borderWidth: 1,
+    borderColor: "#dc2626",
   },
   rowBetween: {
     flexDirection: "row",
