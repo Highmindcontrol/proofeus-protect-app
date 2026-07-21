@@ -1,10 +1,22 @@
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import Constants from "expo-constants";
 import { Button } from "@/components/ui";
 import { colors } from "@/theme/colors";
 import { typography } from "@/theme/typography";
 import { authenticateDeviceBiometric } from "@/biometrics/device";
 import { confirmerPing, refuserPing, type Ping } from "@/pings/service";
+
+/**
+ * Détecte si l'app tourne dans Expo Go (client générique) vs un build
+ * natif custom (dev-client ou release). Expo Go ne peut pas appliquer
+ * les clés Info.plist de app.json — Face ID y est capricieux voire
+ * bloqué (« missing usage description »). En Expo Go, on affiche donc
+ * un bouton de secours pour tester le flow ping end-to-end.
+ * En build natif : le bouton disparaît complètement, Face ID est
+ * strict, doctrine respectée.
+ */
+const EN_EXPO_GO = Constants.appOwnership === "expo";
 
 /**
  * Modal plein écran qui apparaît quand un ping entrant est détecté.
@@ -47,6 +59,20 @@ export function PingRecuModal({
         );
         return;
       }
+      await confirmerPing(ping.id);
+      onRepondu();
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  async function surConfirmationTestExpoGo() {
+    if (!ping) return;
+    setErreur(null);
+    setEnCours(true);
+    try {
       await confirmerPing(ping.id);
       onRepondu();
     } catch (e) {
@@ -111,6 +137,24 @@ export function PingRecuModal({
               variant="primary"
               disabled={enCours}
             />
+            {EN_EXPO_GO ? (
+              <View style={styles.testBox}>
+                <Text style={styles.testLabel}>Mode test Expo Go</Text>
+                <Text style={styles.testHint}>
+                  Face ID est indisponible en Expo Go (Info.plist figé).
+                  Ce bouton n&apos;existera pas dans l&apos;app finale.
+                </Text>
+                <Pressable
+                  onPress={surConfirmationTestExpoGo}
+                  disabled={enCours}
+                  style={styles.testBtn}
+                >
+                  <Text style={styles.testBtnLabel}>
+                    Confirmer sans biométrie (test)
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
             <Button
               label="Ce n'est pas moi — refuser"
               onPress={surRefus}
@@ -229,6 +273,42 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.fgTertiary,
     textDecorationLine: "underline",
+  },
+  testBox: {
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(245, 158, 11, 0.4)",
+    gap: 8,
+  },
+  testLabel: {
+    ...typography.caption,
+    color: "#f59e0b",
+    fontWeight: "800",
+    fontSize: 10,
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+  },
+  testHint: {
+    ...typography.caption,
+    color: colors.fgSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  testBtn: {
+    marginTop: 4,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    alignItems: "center",
+  },
+  testBtnLabel: {
+    ...typography.caption,
+    color: "#f59e0b",
+    fontWeight: "700",
+    fontSize: 12,
   },
   expire: {
     ...typography.caption,
