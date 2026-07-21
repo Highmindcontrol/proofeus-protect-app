@@ -2,6 +2,7 @@ import { Redirect, Stack } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { colors } from "@/theme/colors";
 import { useAuth } from "@/auth/context";
+import { PingListenerGlobal } from "@/components/PingListenerGlobal";
 
 /**
  * Layout des écrans authentifiés. Si l'utilisateur n'est pas connecté,
@@ -21,13 +22,16 @@ export default function AppLayout() {
   if (!session) return <Redirect href="/welcome" />;
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: colors.bgPrimary },
-        animation: "fade",
-      }}
-    />
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.bgPrimary },
+          animation: "fade",
+        }}
+      />
+      <PingListenerGlobal />
+    </>
   );
 }
 

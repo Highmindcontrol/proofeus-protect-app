@@ -29,13 +29,7 @@ import {
   secondesAvantRotation,
   verifierCodeTotp,
 } from "@/totp/service";
-import {
-  envoyerPing,
-  listerPingsEntrants,
-  relirePing,
-  type Ping,
-} from "@/pings/service";
-import { PingRecuModal } from "@/components/PingRecuModal";
+import { envoyerPing, relirePing, type Ping } from "@/pings/service";
 
 /**
  * Écran « Mon cercle de confiance ».
@@ -85,8 +79,9 @@ export default function CercleScreen() {
     "ok" | "ko" | null
   >(null);
 
-  // Pings entrants (polling toutes les 5 s) + ping sortant en attente
-  const [pingEntrant, setPingEntrant] = useState<Ping | null>(null);
+  // Ping sortant en attente (l'écoute des pings entrants est globale,
+  // gérée par PingListenerGlobal dans le layout _layout.tsx pour que
+  // le modal apparaisse depuis n'importe quel écran).
   const [pingSortant, setPingSortant] = useState<Ping | null>(null);
   const [enEnvoiPing, setEnEnvoiPing] = useState(false);
 
@@ -155,27 +150,6 @@ export default function CercleScreen() {
       }, 3000);
     }
   }
-
-  // Polling des pings entrants — toutes les 5 s tant que l'écran cercle
-  // est ouvert (V0 Expo Go). En V1 dev-client on remplacera par push
-  // notifications distantes.
-  useEffect(() => {
-    let annule = false;
-    async function poll() {
-      const pings = await listerPingsEntrants();
-      if (annule) return;
-      // On affiche le plus récent qui n'est pas déjà consommé
-      if (pings.length > 0 && !pingEntrant) {
-        setPingEntrant(pings[0]);
-      }
-    }
-    void poll();
-    const t = setInterval(poll, 5000);
-    return () => {
-      annule = true;
-      clearInterval(t);
-    };
-  }, [pingEntrant]);
 
   // Polling du ping sortant en attente pour voir la réponse
   useEffect(() => {
@@ -606,12 +580,6 @@ export default function CercleScreen() {
           </>
         )}
       </ScrollView>
-
-      <PingRecuModal
-        ping={pingEntrant}
-        onRepondu={() => setPingEntrant(null)}
-        onFerme={() => setPingEntrant(null)}
-      />
     </SafeAreaView>
   );
 }
