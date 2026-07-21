@@ -185,7 +185,7 @@ export default function KycEnrolmentScreen() {
             </Card>
             <AlertBox
               variant="info"
-              message="V1 : vérification manuelle par notre équipe humaine. V2 (à venir) : OCR + face match automatiques via technologies certifiées."
+              message="Une certification eIDAS opposable devant tribunal sera proposée en option payante lors de l'ajout d'un testament ou d'un Sceau d'Auteur à fort enjeu — vous n'en avez pas besoin pour l'usage courant du Sceau d'Humanité."
             />
             <Button label="Commencer" onPress={demarrer} variant="primary" />
           </>
