@@ -71,13 +71,23 @@ export async function envoyerPing(input: {
 /**
  * Liste les pings entrants encore en attente pour l'utilisateur
  * courant. Utilisé par le polling côté destinataire.
+ *
+ * Filtre CRUCIAL sur destinataire_id : sans ce filtre, les policies
+ * RLS ramènent aussi les pings sortants de l'utilisateur (parce que
+ * l'émetteur a le droit de les lire), et l'émetteur voit son propre
+ * ping surgir chez lui comme s'il en était le destinataire.
  */
 export async function listerPingsEntrants(): Promise<Ping[]> {
+  const { data: session } = await supabase.auth.getSession();
+  const userId = session.session?.user?.id;
+  if (!userId) return [];
+
   const maintenant = new Date().toISOString();
   const { data, error } = await supabase
     .from("pings_verification")
     .select("*")
     .eq("statut", "en_attente")
+    .eq("destinataire_id", userId)
     .gt("expires_at", maintenant)
     .order("created_at", { ascending: false });
   if (error) return [];
