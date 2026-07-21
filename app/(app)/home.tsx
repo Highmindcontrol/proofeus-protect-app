@@ -37,7 +37,8 @@ export default function HomeScreen() {
   const hasFace = Boolean(enrolment.face);
   const hasIris = Boolean(enrolment.iris);
   const hasPalm = Boolean(enrolment.palm);
-  const enrolmentComplet = hasProfil && hasVoice && hasFace && hasIris && hasPalm;
+  const hasKyc = Boolean(enrolment.kyc);
+  const enrolmentComplet = hasProfil && hasVoice && hasFace && hasIris && hasPalm && hasKyc;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -97,6 +98,11 @@ export default function HomeScreen() {
               status={hasPalm ? "ok" : hasIris ? "pending" : "upcoming"}
               onPress={hasIris ? () => router.push("/enroll/palm") : undefined}
             />
+            <Item
+              label="Pièce d'identité"
+              status={hasKyc ? "ok" : hasPalm ? "pending" : "upcoming"}
+              onPress={hasPalm ? () => router.push("/enroll/kyc") : undefined}
+            />
             <Item label="Détection du vivant" status="upcoming" />
           </View>
         </Card>
@@ -130,6 +136,12 @@ export default function HomeScreen() {
             <Button
               label="Enrôler ma paume"
               onPress={() => router.push("/enroll/palm")}
+              variant="primary"
+            />
+          ) : !hasKyc ? (
+            <Button
+              label="Vérifier mon identité"
+              onPress={() => router.push("/enroll/kyc")}
               variant="primary"
             />
           ) : (
