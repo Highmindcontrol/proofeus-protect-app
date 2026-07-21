@@ -34,12 +34,12 @@ const ETAPES: Array<{ main: Main; libelle: string; instruction: string }> = [
   {
     main: "gauche",
     libelle: "Main gauche",
-    instruction: "Présentez la paume de votre main gauche face à la caméra, doigts écartés, fond uni derrière.",
+    instruction: "Posez le téléphone à plat sur une table (écran vers vous), puis présentez la paume de votre main gauche au-dessus de la caméra, doigts écartés.",
   },
   {
     main: "droite",
     libelle: "Main droite",
-    instruction: "Présentez la paume de votre main droite face à la caméra, doigts écartés, fond uni derrière.",
+    instruction: "Le téléphone toujours à plat sur la table, présentez maintenant la paume de votre main droite au-dessus de la caméra, doigts écartés.",
   },
 ];
 
@@ -165,9 +165,13 @@ export default function PalmEnrolmentScreen() {
                 unique à chaque personne.
               </Text>
               <Text style={styles.hint}>
-                Doigts bien écartés, fond uni de préférence, éclairage naturel.
-                Deux captures rapprochées suffisent — le vrai matching
-                multi-modal fera le reste.
+                <Text style={styles.strong}>Astuce importante</Text> —
+                posez votre téléphone à plat sur une table (écran vers vous)
+                et passez votre main ouverte au-dessus. Beaucoup plus stable
+                et net que de tenir le téléphone en même temps.
+              </Text>
+              <Text style={styles.hint}>
+                Doigts écartés, fond uni de préférence, éclairage naturel.
               </Text>
             </Card>
             <Button label="Commencer l'enrôlement" onPress={demarrer} variant="primary" />
