@@ -9,14 +9,14 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { AlertBox, Button, Card } from "@/components/ui";
+import { AlertBox, Card } from "@/components/ui";
 import { colors } from "@/theme/colors";
 import { typography } from "@/theme/typography";
 import {
   declencherAlerte,
   listerContacts,
-  lireCodesSecurite,
-  type CodesSecurite,
+  listerMesCercles,
+  type Cercle,
   type ContactUrgence,
 } from "@/urgence/service";
 
@@ -24,17 +24,16 @@ import {
  * Écran Sécurité+ / Urgence — vue d'ensemble et bouton d'alerte.
  *
  * Contient :
- *   - Statut des contacts d'urgence configurés
- *   - Statut des mots de sécurité définis
- *   - Bouton d'alerte manuel (SOS) qui capture la géoloc et notifie
- *     tous les contacts d'urgence
- *   - Historique bref des alertes récentes (à venir)
+ *   - Statut du cercle de confiance (mot commun) — clic → /urgence/cercle
+ *   - Statut des contacts d'urgence (à alerter en cas de SOS) —
+ *     clic → /urgence/contacts
+ *   - Bouton SOS rouge : géoloc + notification email aux contacts
  */
 
 export default function UrgenceScreen() {
   const router = useRouter();
   const [contacts, setContacts] = useState<ContactUrgence[]>([]);
-  const [codes, setCodes] = useState<CodesSecurite | null>(null);
+  const [cercles, setCercles] = useState<Cercle[]>([]);
   const [chargement, setChargement] = useState(true);
   const [declenchement, setDeclenchement] = useState(false);
   const [succes, setSucces] = useState<string | null>(null);
@@ -43,9 +42,9 @@ export default function UrgenceScreen() {
   const charger = useCallback(async () => {
     setChargement(true);
     try {
-      const [c, k] = await Promise.all([listerContacts(), lireCodesSecurite()]);
+      const [c, k] = await Promise.all([listerContacts(), listerMesCercles()]);
       setContacts(c);
-      setCodes(k);
+      setCercles(k);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e));
     } finally {
@@ -65,7 +64,9 @@ export default function UrgenceScreen() {
 
   async function surAlerte() {
     if (contacts.length === 0) {
-      setErreur("Aucun contact d'urgence configuré. Ajoutez au moins un contact avant de pouvoir déclencher une alerte.");
+      setErreur(
+        "Aucun contact d'urgence configuré. Ajoutez au moins un contact avant de pouvoir déclencher une alerte.",
+      );
       return;
     }
     Alert.alert(
@@ -82,7 +83,9 @@ export default function UrgenceScreen() {
             setDeclenchement(true);
             try {
               const r = await declencherAlerte({ type: "bouton_manuel" });
-              setSucces(`Alerte envoyée à ${r.contactsNotifies} contact${r.contactsNotifies > 1 ? "s" : ""}.`);
+              setSucces(
+                `Alerte envoyée à ${r.contactsNotifies} contact${r.contactsNotifies > 1 ? "s" : ""}.`,
+              );
             } catch (e) {
               setErreur(e instanceof Error ? e.message : String(e));
             } finally {
@@ -94,8 +97,8 @@ export default function UrgenceScreen() {
     );
   }
 
+  const cercle = cercles[0];
   const nbContacts = contacts.length;
-  const aCodes = codes?.a_mot_rassurant && codes?.a_mot_contrainte;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -109,13 +112,41 @@ export default function UrgenceScreen() {
             Votre protection active.
           </Text>
           <Text style={styles.subtitle}>
-            Contacts, codes, alerte instantanée — tout ce qui vous protège au
-            moment critique.
+            Le mot de votre cercle contre les usurpations, vos contacts
+            d&apos;urgence pour l&apos;alerte, votre position instantanée si
+            besoin.
           </Text>
         </View>
 
         {erreur ? <AlertBox variant="error" message={erreur} /> : null}
         {succes ? <AlertBox variant="success" message={succes} /> : null}
+
+        {/* Cercle de confiance */}
+        <Pressable onPress={() => router.push("/urgence/cercle")}>
+          <Card style={styles.card}>
+            <View style={styles.rowBetween}>
+              <View style={{ flex: 1 }}>
+                <Text style={typography.eyebrow}>Mon cercle de confiance</Text>
+                <Text style={styles.cardValue}>
+                  {chargement
+                    ? "…"
+                    : cercle
+                      ? cercle.nom
+                      : "Aucun cercle créé"}
+                </Text>
+                {cercle ? (
+                  <Text style={styles.motBadge}>Mot : {cercle.mot_commun}</Text>
+                ) : null}
+              </View>
+              <Text style={styles.chev}>›</Text>
+            </View>
+            <Text style={styles.cardHint}>
+              {cercle
+                ? "Demandez « quel est le mot de notre cercle ? » à quiconque prétend être un proche. Le vrai le sait, l'imposteur non."
+                : "Créez un cercle avec un mot commun partagé par vos proches — la meilleure défense contre les arnaques téléphoniques et deepfakes vocaux."}
+            </Text>
+          </Card>
+        </Pressable>
 
         {/* Contacts d'urgence */}
         <Pressable onPress={() => router.push("/urgence/contacts")}>
@@ -138,29 +169,6 @@ export default function UrgenceScreen() {
                     .slice(0, 3)
                     .map((c) => c.nom)
                     .join(" · ")}
-            </Text>
-          </Card>
-        </Pressable>
-
-        {/* Codes de sécurité */}
-        <Pressable onPress={() => router.push("/urgence/codes")}>
-          <Card style={styles.card}>
-            <View style={styles.rowBetween}>
-              <View>
-                <Text style={typography.eyebrow}>Mots de sécurité</Text>
-                <Text style={styles.cardValue}>
-                  {chargement
-                    ? "…"
-                    : aCodes
-                      ? "Mot rassurant + mot de contrainte configurés"
-                      : "Non configurés"}
-                </Text>
-              </View>
-              <Text style={styles.chev}>›</Text>
-            </View>
-            <Text style={styles.cardHint}>
-              Sous menace, donnez votre mot de contrainte — l&apos;app déclenche
-              une alerte discrète sans que votre attaquant s&apos;en aperçoive.
             </Text>
           </Card>
         </Pressable>
@@ -221,6 +229,13 @@ const styles = StyleSheet.create({
     color: colors.fgPrimary,
     fontWeight: "600",
     marginTop: 4,
+  },
+  motBadge: {
+    ...typography.caption,
+    color: colors.cyan,
+    marginTop: 2,
+    fontWeight: "600",
+    letterSpacing: 0.5,
   },
   cardHint: {
     ...typography.caption,

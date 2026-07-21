@@ -1,4 +1,3 @@
-import * as Crypto from "expo-crypto";
 import * as Location from "expo-location";
 import { supabase } from "@/supabase/client";
 
@@ -7,9 +6,15 @@ import { supabase } from "@/supabase/client";
  *
  * Contient les fonctions utilisées par les écrans /urgence/* :
  *   - Gestion des contacts d'urgence (CRUD)
- *   - Gestion des codes de sécurité (hash côté device)
+ *   - Gestion du cercle de confiance (créer, rejoindre, inviter des
+ *     membres) — le mot commun est stocké en clair, consultable par
+ *     tous les membres du cercle
  *   - Déclenchement d'une alerte (capture géoloc + envoi via API)
  */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export type ContactUrgence = {
   id?: string;
@@ -23,12 +28,25 @@ export type ContactUrgence = {
   actif: boolean;
 };
 
-export type CodesSecurite = {
-  mot_rassurant_indice: string | null;
-  mot_contrainte_indice: string | null;
-  a_mot_rassurant: boolean;
-  a_mot_contrainte: boolean;
-  a_pin: boolean;
+export type Cercle = {
+  id: string;
+  nom: string;
+  mot_commun: string;
+  mot_commun_indice: string | null;
+  createur_id: string;
+  code_invitation: string;
+  created_at: string;
+};
+
+export type MembreCercle = {
+  id: string;
+  cercle_id: string;
+  user_id: string | null;
+  email: string;
+  nom: string | null;
+  role: "createur" | "membre";
+  invite_at: string;
+  accepte_at: string | null;
 };
 
 export type TypeDeclenchement =
@@ -73,87 +91,126 @@ export async function supprimerContact(id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Codes de sécurité
+// Cercle de confiance
 // ---------------------------------------------------------------------------
 
 /**
- * Hash un mot (SHA-256) — la comparaison se fait côté device en local
- * pour vérifier si un mot saisi correspond au mot rassurant ou au mot
- * de contrainte. Le mot en clair ne quitte jamais l'app.
+ * Renvoie tous les cercles auxquels l'utilisateur appartient — comme
+ * créateur ou comme membre invité/accepté.
  */
-async function hashMot(mot: string): Promise<string> {
-  const normalise = mot.trim().toLowerCase();
-  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, normalise);
+export async function listerMesCercles(): Promise<Cercle[]> {
+  const { data, error } = await supabase.from("cercles").select("*");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Cercle[];
 }
 
-export async function lireCodesSecurite(): Promise<CodesSecurite | null> {
-  const { data } = await supabase
-    .from("codes_securite")
-    .select("mot_rassurant_hash, mot_rassurant_indice, mot_contrainte_hash, mot_contrainte_indice, code_pin_hash")
-    .maybeSingle();
-  if (!data) return null;
-  return {
-    mot_rassurant_indice: data.mot_rassurant_indice,
-    mot_contrainte_indice: data.mot_contrainte_indice,
-    a_mot_rassurant: Boolean(data.mot_rassurant_hash),
-    a_mot_contrainte: Boolean(data.mot_contrainte_hash),
-    a_pin: Boolean(data.code_pin_hash),
-  };
-}
-
-export async function definirCodesSecurite(input: {
-  motRassurant: string;
-  motRassurantIndice: string;
-  motContrainte: string;
-  motContrainteIndice: string;
-  pin?: string;
-}): Promise<void> {
+/**
+ * Crée un nouveau cercle dont l'utilisateur devient créateur, et
+ * s'inscrit automatiquement comme membre.
+ */
+export async function creerCercle(input: {
+  nom: string;
+  motCommun: string;
+  indice?: string;
+}): Promise<Cercle> {
   const { data: session } = await supabase.auth.getSession();
   const userId = session.session?.user?.id;
-  if (!userId) throw new Error("Vous devez être connecté.");
+  const email = session.session?.user?.email;
+  if (!userId || !email) throw new Error("Vous devez être connecté.");
 
-  if (input.motRassurant.trim().toLowerCase() === input.motContrainte.trim().toLowerCase()) {
-    throw new Error("Le mot rassurant et le mot de contrainte doivent être différents.");
-  }
+  const { data: cercle, error } = await supabase
+    .from("cercles")
+    .insert({
+      nom: input.nom.trim(),
+      mot_commun: input.motCommun.trim(),
+      mot_commun_indice: input.indice?.trim() || null,
+      createur_id: userId,
+    })
+    .select("*")
+    .single();
+  if (error || !cercle) throw new Error(error?.message ?? "Erreur création cercle.");
 
-  const [motRassurantHash, motContrainteHash] = await Promise.all([
-    hashMot(input.motRassurant),
-    hashMot(input.motContrainte),
-  ]);
-  const pinHash = input.pin ? await hashMot(input.pin) : null;
+  // S'inscrire soi-même comme membre créateur
+  await supabase.from("cercles_membres").insert({
+    cercle_id: cercle.id,
+    user_id: userId,
+    email,
+    nom: null,
+    role: "createur",
+    accepte_at: new Date().toISOString(),
+  });
 
-  const { error } = await supabase.from("codes_securite").upsert(
-    {
-      owner_id: userId,
-      mot_rassurant_hash: motRassurantHash,
-      mot_rassurant_indice: input.motRassurantIndice.trim() || null,
-      mot_contrainte_hash: motContrainteHash,
-      mot_contrainte_indice: input.motContrainteIndice.trim() || null,
-      code_pin_hash: pinHash,
-      actif: true,
-    },
-    { onConflict: "owner_id" },
-  );
+  return cercle as Cercle;
+}
+
+/**
+ * Renomme le cercle et/ou change le mot commun (le créateur uniquement).
+ */
+export async function modifierCercle(
+  cercleId: string,
+  patch: Partial<Pick<Cercle, "nom" | "mot_commun" | "mot_commun_indice">>,
+): Promise<void> {
+  const { error } = await supabase.from("cercles").update(patch).eq("id", cercleId);
   if (error) throw new Error(error.message);
 }
 
 /**
- * Vérifie un mot saisi contre le mot rassurant et le mot de contrainte
- * stockés (hashés). Retourne le type détecté, ou null si aucun match.
- * Utilisé lors d'une demande de code sous menace.
+ * Liste des membres d'un cercle donné.
  */
-export async function verifierMotSaisi(
-  mot: string,
-): Promise<"rassurant" | "contrainte" | null> {
-  const { data } = await supabase
-    .from("codes_securite")
-    .select("mot_rassurant_hash, mot_contrainte_hash")
-    .maybeSingle();
-  if (!data) return null;
-  const h = await hashMot(mot);
-  if (h === data.mot_contrainte_hash) return "contrainte";
-  if (h === data.mot_rassurant_hash) return "rassurant";
-  return null;
+export async function listerMembresCercle(cercleId: string): Promise<MembreCercle[]> {
+  const { data, error } = await supabase
+    .from("cercles_membres")
+    .select("*")
+    .eq("cercle_id", cercleId)
+    .order("invite_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as MembreCercle[];
+}
+
+/**
+ * Invite un membre par email dans un cercle.
+ * Envoie un email via l'API web + insère la ligne dans cercles_membres.
+ * Si le membre est déjà inscrit sur Proofeus, il est rattaché
+ * automatiquement au cercle via son user_id. Sinon, la ligne existe
+ * en attente et sera rattachée automatiquement à sa première connexion
+ * (trigger auth.users → rattacher_cercles_a_nouveau_user).
+ */
+export async function inviterMembreCercle(
+  cercleId: string,
+  input: { email: string; nom?: string },
+): Promise<MembreCercle> {
+  const emailPropre = input.email.trim().toLowerCase();
+  if (!emailPropre) throw new Error("L'email est obligatoire.");
+
+  const { data: membre, error } = await supabase
+    .from("cercles_membres")
+    .insert({
+      cercle_id: cercleId,
+      email: emailPropre,
+      nom: input.nom?.trim() || null,
+      role: "membre",
+    })
+    .select("*")
+    .single();
+  if (error || !membre) throw new Error(error?.message ?? "Erreur invitation.");
+
+  // Envoi de l'email d'invitation via l'API web (best effort)
+  try {
+    await fetch("https://proofeus.com/api/urgence/inviter-cercle", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cercleId, membreId: membre.id }),
+    });
+  } catch {
+    // silencieux — l'invitation existe en base même si l'email a échoué
+  }
+
+  return membre as MembreCercle;
+}
+
+export async function retirerMembreCercle(membreId: string): Promise<void> {
+  const { error } = await supabase.from("cercles_membres").delete().eq("id", membreId);
+  if (error) throw new Error(error.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,14 +246,11 @@ export async function declencherAlerte(input: {
   const userId = session.session?.user?.id;
   if (!userId) throw new Error("Vous devez être connecté.");
 
-  // Position (best effort — n'échoue pas si permission refusée)
   const position = await capturerPosition();
 
-  // Snapshot des contacts au moment T
   const contacts = await listerContacts();
   const contactsActifs = contacts.filter((c) => c.actif);
 
-  // Créer la ligne alerte
   const { data: alerte, error: aErr } = await supabase
     .from("alertes_declenchees")
     .insert({
@@ -214,7 +268,6 @@ export async function declencherAlerte(input: {
 
   if (aErr || !alerte) throw new Error(aErr?.message ?? "Erreur création alerte.");
 
-  // Envoyer les notifications via l'API web (email + SMS via Brevo)
   const url = `https://proofeus.com/api/urgence/declencher`;
   try {
     await fetch(url, {
