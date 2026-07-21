@@ -16,32 +16,42 @@ import { typography } from "@/theme/typography";
 import { useAuth } from "@/auth/context";
 import { authenticateDeviceBiometric } from "@/biometrics/device";
 import { saveFaceSample } from "@/biometrics/face";
+import { AnalyseSimulee } from "@/components/AnalyseSimulee";
+import { BarreProgressionEnrolement } from "@/components/BarreProgressionEnrolement";
+import { CompteARebours } from "@/components/CompteARebours";
 
 /**
- * Écran d'enrôlement de la morphologie faciale 3D.
+ * Enrôlement morphologie 3D — refonte UX 21 juillet 2026.
  *
- * Approche A (MVP) :
- *  1) Intro + demande de consentement
- *  2) Validation Face ID native (le module TrueDepth capture ~30 000
- *     points 3D en infrarouge — c'est la vraie morphologie 3D côté hardware)
- *  3) Capture photo caméra frontale comme ancre visuelle
- *  4) Hash SHA-256 de la photo + save local
- *  5) Marker enrolment_status.face côté Supabase
- *  6) Retour à la home avec ✓
+ * Trois angles de capture séquentiels (face, droite, gauche) avec :
+ *   - Compte à rebours 3-2-1 avant chaque prise
+ *   - Guide visuel adapté à l'angle demandé
+ *   - Phase d'analyse simulée entre chaque capture
+ *   - Barre de progression étape/3
  *
- * Approche B (à venir) : module natif Swift qui expose ARKit ARFaceAnchor
- * pour extraire un vrai descripteur facial 3D (vecteur de features + hash).
- * Le UI ne changera pas — seul le moteur d'extraction sera remplacé.
+ * V2 (post-dev-client) : ARKit ARFaceAnchor pour un vrai suivi 3D
+ * temps réel type Face ID Apple (anneau qui se remplit selon la
+ * rotation de la tête détectée).
  */
 
-type Step =
-  | "intro"
-  | "faceid"
-  | "camera"
-  | "review"
-  | "saving"
-  | "done"
-  | "error";
+type AngleFace = "face" | "droite" | "gauche";
+
+const ETAPES: Array<{ angle: AngleFace; libelle: string; instruction: string }> = [
+  { angle: "face", libelle: "De face", instruction: "Regardez droit vers la caméra, visage centré." },
+  { angle: "droite", libelle: "Profil droit", instruction: "Tournez lentement la tête vers votre droite." },
+  { angle: "gauche", libelle: "Profil gauche", instruction: "Tournez lentement la tête vers votre gauche." },
+];
+
+type Etape =
+  | { kind: "intro" }
+  | { kind: "faceid" }
+  | { kind: "positionnement"; idx: number }
+  | { kind: "rebours"; idx: number }
+  | { kind: "capture"; idx: number }
+  | { kind: "analyse"; idx: number }
+  | { kind: "saving" }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
 
 export default function FaceEnrolmentScreen() {
   const router = useRouter();
@@ -49,44 +59,45 @@ export default function FaceEnrolmentScreen() {
   const cameraRef = useRef<CameraView>(null);
 
   const [permission, requestPermission] = useCameraPermissions();
-  const [step, setStep] = useState<Step>("intro");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [etape, setEtape] = useState<Etape>({ kind: "intro" });
+  const [captures, setCaptures] = useState<Array<{ hash: string; angle: AngleFace }>>([]);
+  const [aperçu, setApercu] = useState<string | null>(null);
 
-  async function startFlow() {
-    setErrorMsg(null);
-    setStep("faceid");
+  async function demarrer() {
+    setEtape({ kind: "faceid" });
     try {
       const result = await authenticateDeviceBiometric(
         "Proofeus — validez votre visage pour enrôler votre empreinte 3D",
       );
       if (!result.success) {
-        setErrorMsg(
-          result.error ??
-            "La validation Face ID a échoué. Réessayez ou vérifiez que Face ID est activé sur cet iPhone.",
-        );
-        setStep("error");
+        setEtape({
+          kind: "error",
+          message:
+            result.error ??
+            "La validation Face ID a échoué. Réessayez ou vérifiez que Face ID est activé.",
+        });
         return;
       }
-      // Face ID OK → étape caméra pour capturer l'ancre visuelle
       if (!permission?.granted) {
         const req = await requestPermission();
         if (!req.granted) {
-          setErrorMsg(
-            "L'accès à la caméra est nécessaire pour capturer votre visage. Autorisez-le dans les réglages de votre iPhone.",
-          );
-          setStep("error");
+          setEtape({
+            kind: "error",
+            message: "L'accès à la caméra est nécessaire pour capturer votre visage.",
+          });
           return;
         }
       }
-      setStep("camera");
+      setEtape({ kind: "positionnement", idx: 0 });
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur inconnue");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur inconnue",
+      });
     }
   }
 
-  async function capturePhoto() {
+  async function capturerAngle(idx: number) {
     try {
       if (!cameraRef.current) throw new Error("Caméra non prête");
       const photo = await cameraRef.current.takePictureAsync({
@@ -94,42 +105,65 @@ export default function FaceEnrolmentScreen() {
         skipProcessing: false,
       });
       if (!photo?.uri) throw new Error("Aucune photo capturée");
-      setCapturedUri(photo.uri);
-      setStep("review");
+      setApercu(photo.uri);
+      const { hash } = await saveFaceSample(photo.uri, "reference");
+      const angle = ETAPES[idx].angle;
+      setCaptures((prev) => [...prev, { hash, angle }]);
+      setEtape({ kind: "analyse", idx });
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de capture");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de capture",
+      });
     }
   }
 
-  async function saveAndFinalize() {
-    if (!capturedUri) return;
-    setStep("saving");
-    try {
-      await saveFaceSample(capturedUri, "reference");
+  function passerAEtapeSuivante(idx: number) {
+    if (idx >= ETAPES.length - 1) {
+      finaliser();
+    } else {
+      setApercu(null);
+      setEtape({ kind: "positionnement", idx: idx + 1 });
+    }
+  }
 
-      const currentStatus = (profil?.enrolment_status ?? {}) as Record<
-        string,
-        unknown
-      >;
+  async function finaliser() {
+    setEtape({ kind: "saving" });
+    try {
+      const currentStatus = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
       const { error } = await updateProfil({
         enrolment_status: {
           ...currentStatus,
           face: {
             enrolled_at: new Date().toISOString(),
-            method: "faceid+photo",
-            samples: 1,
+            method: "faceid+photo-3-angles",
+            samples: captures.length,
+            hashes: captures.reduce(
+              (acc, c) => ({ ...acc, [c.angle]: c.hash }),
+              {} as Record<string, string>,
+            ),
           },
         },
       });
       if (error) throw new Error(error);
-      setStep("done");
-      setTimeout(() => router.replace("/home"), 900);
+      setEtape({ kind: "done" });
+      setTimeout(() => router.replace("/home"), 1200);
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de sauvegarde");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de sauvegarde",
+      });
     }
   }
+
+  const idxCourant =
+    etape.kind === "positionnement" ||
+    etape.kind === "rebours" ||
+    etape.kind === "capture" ||
+    etape.kind === "analyse"
+      ? etape.idx
+      : 0;
+  const etapeCourante = ETAPES[idxCourant];
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -144,44 +178,49 @@ export default function FaceEnrolmentScreen() {
           </Text>
         </View>
 
-        {step === "intro" ? (
+        {etape.kind === "intro" ? (
           <>
             <Card style={styles.card}>
               <Text style={typography.eyebrow}>Comment ça marche</Text>
               <Text style={styles.hint}>
-                Face ID utilise le module TrueDepth de votre iPhone pour
-                projeter environ 30 000 points infrarouges sur votre visage
-                et en dériver une carte 3D précise au millimètre.
+                Nous capturons votre visage sous <Text style={styles.strong}>trois angles</Text> —
+                de face, profil droit, profil gauche — pour construire un
+                descripteur morphologique tridimensionnel robuste aux
+                variations de posture et d&apos;éclairage.
               </Text>
               <Text style={styles.hint}>
-                Nous demandons cette validation, puis nous capturons une
-                photo de référence avec la caméra frontale. Un hash
-                cryptographique est calculé — la photo et la carte 3D
-                restent sur votre iPhone.
+                Face ID valide d&apos;abord votre présence via le module
+                TrueDepth, puis chaque angle est capturé avec un temps
+                de positionnement. Aucune photo ne quitte votre iPhone —
+                seul un descripteur crypté est envoyé.
               </Text>
             </Card>
             <AlertBox
               variant="info"
-              message="Votre visage ne quitte jamais l'appareil. Face ID est traité dans le Secure Enclave d'Apple, et la photo de référence est chiffrée dans un espace privé accessible uniquement à Proofeus Protect."
+              message="Prochainement : suivi 3D temps réel type Face ID Apple avec anneau visuel qui se remplit selon la rotation de votre tête. Requiert un build natif."
             />
-            <View style={styles.actions}>
-              <Button
-                label="Commencer l'enrôlement"
-                onPress={startFlow}
-                variant="primary"
-              />
-            </View>
+            <Button label="Commencer l'enrôlement" onPress={demarrer} variant="primary" />
           </>
         ) : null}
 
-        {step === "faceid" ? (
+        {etape.kind === "faceid" ? (
           <View style={styles.centered}>
             <Text style={styles.savingText}>Validation Face ID en cours…</Text>
           </View>
         ) : null}
 
-        {step === "camera" ? (
+        {etape.kind === "positionnement" ||
+        etape.kind === "rebours" ||
+        etape.kind === "capture" ? (
           <>
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
+            />
+            <Card style={styles.instructionCard}>
+              <Text style={styles.instructionLibelle}>{etapeCourante.libelle}</Text>
+              <Text style={styles.instructionTexte}>{etapeCourante.instruction}</Text>
+            </Card>
             <View style={styles.cameraWrap}>
               <CameraView
                 ref={cameraRef}
@@ -189,80 +228,69 @@ export default function FaceEnrolmentScreen() {
                 facing="front"
               />
               <View style={styles.oval} pointerEvents="none" />
+              {etape.kind === "rebours" ? (
+                <CompteARebours
+                  duree={3}
+                  onFini={() => setEtape({ kind: "capture", idx: etape.idx })}
+                />
+              ) : null}
+              {etape.kind === "capture" ? (() => {
+                capturerAngle(etape.idx);
+                return null;
+              })() : null}
             </View>
-            <Text style={styles.hint}>
-              Placez votre visage dans le cadre ovale, regardez droit vers
-              l'objectif, éclairage naturel de préférence.
-            </Text>
-            <View style={styles.actions}>
+            {etape.kind === "positionnement" ? (
               <Button
-                label="Capturer"
-                onPress={capturePhoto}
+                label={idxCourant === 0 ? "Je suis prêt — démarrer la capture" : "Démarrer la capture"}
+                onPress={() => setEtape({ kind: "rebours", idx: idxCourant })}
                 variant="primary"
               />
-            </View>
+            ) : null}
           </>
         ) : null}
 
-        {step === "review" && capturedUri ? (
+        {etape.kind === "analyse" ? (
           <>
-            <View style={styles.reviewImageWrap}>
-              <Image source={{ uri: capturedUri }} style={styles.reviewImage} />
-            </View>
-            <AlertBox
-              variant="info"
-              message="Votre photo de référence a été capturée. Validez pour enregistrer votre empreinte, ou recommencez si vous n'êtes pas satisfait."
+            {aperçu ? (
+              <View style={styles.reviewImageWrap}>
+                <Image source={{ uri: aperçu }} style={styles.reviewImage} />
+              </View>
+            ) : null}
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
             />
-            <View style={styles.actions}>
-              <Button
-                label="Valider l'empreinte"
-                onPress={saveAndFinalize}
-                variant="primary"
-              />
-              <Button
-                label="Recommencer"
-                onPress={() => {
-                  setCapturedUri(null);
-                  setStep("camera");
-                }}
-                variant="secondary"
-              />
-            </View>
+            <AnalyseSimulee
+              type="face"
+              duree={2400}
+              onFini={() => passerAEtapeSuivante(etape.idx)}
+            />
           </>
         ) : null}
 
-        {step === "saving" ? (
-          <View style={styles.centered}>
-            <Text style={styles.savingText}>
-              Enregistrement de votre empreinte faciale…
-            </Text>
-          </View>
+        {etape.kind === "saving" ? (
+          <AnalyseSimulee type="face" duree={1500} onFini={() => {}} />
         ) : null}
 
-        {step === "done" ? (
+        {etape.kind === "done" ? (
           <AlertBox
             variant="success"
-            message="Empreinte faciale enregistrée. Retour à l'accueil…"
+            message={`Empreinte faciale 3D enregistrée — ${captures.length} angles capturés. Retour à l'accueil…`}
           />
         ) : null}
 
-        {step === "error" ? (
+        {etape.kind === "error" ? (
           <>
-            <AlertBox
-              variant="error"
-              message={errorMsg ?? "Une erreur est survenue."}
+            <AlertBox variant="error" message={etape.message} />
+            <Button
+              label="Réessayer depuis le début"
+              onPress={() => {
+                setCaptures([]);
+                setApercu(null);
+                setEtape({ kind: "intro" });
+              }}
+              variant="primary"
             />
-            <View style={styles.actions}>
-              <Button
-                label="Réessayer"
-                onPress={() => {
-                  setErrorMsg(null);
-                  setCapturedUri(null);
-                  setStep("intro");
-                }}
-                variant="primary"
-              />
-            </View>
           </>
         ) : null}
       </ScrollView>
@@ -272,7 +300,7 @@ export default function FaceEnrolmentScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bgPrimary },
-  container: { padding: 24, gap: 20, paddingBottom: 40 },
+  container: { padding: 24, gap: 16, paddingBottom: 40 },
   header: { gap: 8 },
   back: { color: colors.fgTertiary, fontSize: 13 },
   title: { marginTop: 4 },
@@ -284,7 +312,32 @@ const styles = StyleSheet.create({
     color: colors.fgTertiary,
     lineHeight: 20,
   },
-  actions: { gap: 12 },
+  strong: {
+    color: colors.fgPrimary,
+    fontWeight: "700",
+  },
+
+  instructionCard: {
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 18,
+    borderWidth: 1.5,
+    borderColor: colors.cyan,
+    backgroundColor: "rgba(63,212,217,0.06)",
+  },
+  instructionLibelle: {
+    ...typography.eyebrow,
+    color: colors.cyan,
+    fontSize: 11,
+    letterSpacing: 1.5,
+  },
+  instructionTexte: {
+    ...typography.title,
+    fontSize: 18,
+    color: colors.fgPrimary,
+    textAlign: "center",
+    paddingHorizontal: 12,
+  },
 
   cameraWrap: {
     aspectRatio: 3 / 4,

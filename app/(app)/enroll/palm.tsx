@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import {
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,24 +14,44 @@ import { colors } from "@/theme/colors";
 import { typography } from "@/theme/typography";
 import { useAuth } from "@/auth/context";
 import { savePalmSample } from "@/biometrics/palm";
+import { AnalyseSimulee } from "@/components/AnalyseSimulee";
+import { BarreProgressionEnrolement } from "@/components/BarreProgressionEnrolement";
+import { CompteARebours } from "@/components/CompteARebours";
 
 /**
- * Écran d'enrôlement de la paume — quatrième modalité biométrique (V0).
+ * Enrôlement paume — refonte UX 21 juillet 2026.
  *
- * V0 : capture photo de la paume ouverte face à la caméra arrière +
- * hash SHA-256 comme empreinte préliminaire. Précision attendue 85-90 %
- * en fusion.
+ * Deux captures séquentielles (main gauche, main droite) avec compte
+ * à rebours + analyse simulée + barre de progression.
  *
- * V1 (à venir) : segmentation MediaPipe Hands (21 landmarks) + extraction
- * géométrique (longueur des doigts, ratios articulaires, motifs de
- * lignes visibles) via module natif. Le UI ne changera pas.
- *
- * Le réseau veineux profond (précision > 99 %) nécessite un capteur
- * infrarouge dédié — non disponible sur smartphone grand public,
- * prévu en évolution matérielle future.
+ * V2 : MediaPipe Hands 21 landmarks + géométrie articulaire pour un
+ * vrai descripteur (précision 85-90 % en fusion).
  */
 
-type Step = "intro" | "camera" | "review" | "saving" | "done" | "error";
+type Main = "gauche" | "droite";
+
+const ETAPES: Array<{ main: Main; libelle: string; instruction: string }> = [
+  {
+    main: "gauche",
+    libelle: "Main gauche",
+    instruction: "Présentez la paume de votre main gauche face à la caméra, doigts écartés, fond uni derrière.",
+  },
+  {
+    main: "droite",
+    libelle: "Main droite",
+    instruction: "Présentez la paume de votre main droite face à la caméra, doigts écartés, fond uni derrière.",
+  },
+];
+
+type Etape =
+  | { kind: "intro" }
+  | { kind: "positionnement"; idx: number }
+  | { kind: "rebours"; idx: number }
+  | { kind: "capture"; idx: number }
+  | { kind: "analyse"; idx: number }
+  | { kind: "saving" }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
 
 export default function PalmEnrolmentScreen() {
   const router = useRouter();
@@ -40,26 +59,24 @@ export default function PalmEnrolmentScreen() {
   const cameraRef = useRef<CameraView>(null);
 
   const [permission, requestPermission] = useCameraPermissions();
-  const [step, setStep] = useState<Step>("intro");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [etape, setEtape] = useState<Etape>({ kind: "intro" });
+  const [captures, setCaptures] = useState<Array<{ hash: string; main: Main }>>([]);
 
-  async function startFlow() {
-    setErrorMsg(null);
+  async function demarrer() {
     if (!permission?.granted) {
-      const req = await requestPermission();
-      if (!req.granted) {
-        setErrorMsg(
-          "L'accès à la caméra est nécessaire pour capturer votre paume. Autorisez-le dans les réglages de votre iPhone.",
-        );
-        setStep("error");
+      const r = await requestPermission();
+      if (!r.granted) {
+        setEtape({
+          kind: "error",
+          message: "L'accès à la caméra est nécessaire pour capturer vos paumes.",
+        });
         return;
       }
     }
-    setStep("camera");
+    setEtape({ kind: "positionnement", idx: 0 });
   }
 
-  async function capturePhoto() {
+  async function capturerPaume(idx: number) {
     try {
       if (!cameraRef.current) throw new Error("Caméra non prête");
       const photo = await cameraRef.current.takePictureAsync({
@@ -67,39 +84,62 @@ export default function PalmEnrolmentScreen() {
         skipProcessing: false,
       });
       if (!photo?.uri) throw new Error("Aucune photo capturée");
-      setCapturedUri(photo.uri);
-      setStep("review");
+      const { hash } = await savePalmSample(photo.uri, "reference");
+      setCaptures((prev) => [...prev, { hash, main: ETAPES[idx].main }]);
+      setEtape({ kind: "analyse", idx });
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de capture");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de capture",
+      });
     }
   }
 
-  async function saveAndFinalize() {
-    if (!capturedUri) return;
-    setStep("saving");
-    try {
-      await savePalmSample(capturedUri, "reference");
+  function passerAEtapeSuivante(idx: number) {
+    if (idx >= ETAPES.length - 1) {
+      finaliser();
+    } else {
+      setEtape({ kind: "positionnement", idx: idx + 1 });
+    }
+  }
 
+  async function finaliser() {
+    setEtape({ kind: "saving" });
+    try {
       const currentStatus = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
       const { error } = await updateProfil({
         enrolment_status: {
           ...currentStatus,
           palm: {
             enrolled_at: new Date().toISOString(),
-            method: "photo-rgb",
-            samples: 1,
+            method: "photo-rgb-2-mains",
+            samples: captures.length,
+            hashes: captures.reduce(
+              (acc, c) => ({ ...acc, [c.main]: c.hash }),
+              {} as Record<string, string>,
+            ),
           },
         },
       });
       if (error) throw new Error(error);
-      setStep("done");
-      setTimeout(() => router.replace("/home"), 900);
+      setEtape({ kind: "done" });
+      setTimeout(() => router.replace("/home"), 1200);
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de sauvegarde");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de sauvegarde",
+      });
     }
   }
+
+  const idxCourant =
+    etape.kind === "positionnement" ||
+    etape.kind === "rebours" ||
+    etape.kind === "capture" ||
+    etape.kind === "analyse"
+      ? etape.idx
+      : 0;
+  const etapeCourante = ETAPES[idxCourant];
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -110,118 +150,106 @@ export default function PalmEnrolmentScreen() {
           </Pressable>
           <Text style={typography.eyebrow}>Enrôlement · Paume</Text>
           <Text style={[typography.title, styles.title]}>
-            Votre empreinte de main.
+            Vos deux paumes, séparément.
           </Text>
         </View>
 
-        {step === "intro" ? (
+        {etape.kind === "intro" ? (
           <>
             <Card style={styles.card}>
               <Text style={typography.eyebrow}>Comment ça marche</Text>
               <Text style={styles.hint}>
-                Nous allons capturer une photo de votre paume ouverte. Placez
-                votre main à plat, doigts écartés, à environ 30 cm de la
-                caméra arrière, sur un fond uni de préférence.
+                Nous capturons vos deux paumes <Text style={styles.strong}>séparément</Text>,
+                une main après l&apos;autre. La géométrie de la paume, les lignes
+                de vie, la position des articulations forment une empreinte
+                unique à chaque personne.
               </Text>
               <Text style={styles.hint}>
-                La géométrie de votre main (longueur des doigts, écarts,
-                lignes visibles) forme une empreinte unique. La photo reste
-                sur votre iPhone, seul un hash cryptographique est calculé.
+                Doigts bien écartés, fond uni de préférence, éclairage naturel.
+                Deux captures rapprochées suffisent — le vrai matching
+                multi-modal fera le reste.
               </Text>
             </Card>
-            <AlertBox
-              variant="info"
-              message="La précision de la paume par caméra RGB est de 85-90 % en fusion multi-modale. Cette modalité complète les autres signaux (voix, morphologie, iris, présence vivante) pour une fiabilité globale supérieure à 99,5 %."
-            />
-            <View style={styles.actions}>
-              <Button
-                label="Commencer l'enrôlement"
-                onPress={startFlow}
-                variant="primary"
-              />
-            </View>
+            <Button label="Commencer l'enrôlement" onPress={demarrer} variant="primary" />
           </>
         ) : null}
 
-        {step === "camera" ? (
+        {etape.kind === "positionnement" ||
+        etape.kind === "rebours" ||
+        etape.kind === "capture" ? (
           <>
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
+            />
+            <Card style={styles.instructionCard}>
+              <Text style={styles.instructionLibelle}>{etapeCourante.libelle}</Text>
+              <Text style={styles.instructionTexte}>{etapeCourante.instruction}</Text>
+            </Card>
             <View style={styles.cameraWrap}>
               <CameraView
                 ref={cameraRef}
                 style={styles.camera}
                 facing="front"
               />
-              <View style={styles.palmGuide} pointerEvents="none" />
+              <View style={styles.palm} pointerEvents="none" />
+              {etape.kind === "rebours" ? (
+                <CompteARebours
+                  duree={3}
+                  onFini={() => setEtape({ kind: "capture", idx: etape.idx })}
+                />
+              ) : null}
+              {etape.kind === "capture" ? (() => {
+                capturerPaume(etape.idx);
+                return null;
+              })() : null}
             </View>
-            <Text style={styles.hint}>
-              Placez votre paume ouverte dans le cadre cyan, doigts écartés,
-              face à la caméra.
-            </Text>
-            <View style={styles.actions}>
-              <Button label="Capturer" onPress={capturePhoto} variant="primary" />
-            </View>
-          </>
-        ) : null}
-
-        {step === "review" && capturedUri ? (
-          <>
-            <View style={styles.reviewImageWrap}>
-              <Image source={{ uri: capturedUri }} style={styles.reviewImage} />
-            </View>
-            <AlertBox
-              variant="info"
-              message="Votre photo de paume est capturée. Validez pour enregistrer votre empreinte, ou recommencez si vous n'êtes pas satisfait."
-            />
-            <View style={styles.actions}>
+            {etape.kind === "positionnement" ? (
               <Button
-                label="Valider l'empreinte"
-                onPress={saveAndFinalize}
+                label="Je suis prêt — démarrer la capture"
+                onPress={() => setEtape({ kind: "rebours", idx: idxCourant })}
                 variant="primary"
               />
-              <Button
-                label="Recommencer"
-                onPress={() => {
-                  setCapturedUri(null);
-                  setStep("camera");
-                }}
-                variant="secondary"
-              />
-            </View>
+            ) : null}
           </>
         ) : null}
 
-        {step === "saving" ? (
-          <View style={styles.centered}>
-            <Text style={styles.savingText}>
-              Enregistrement de votre empreinte de main…
-            </Text>
-          </View>
+        {etape.kind === "analyse" ? (
+          <>
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
+            />
+            <AnalyseSimulee
+              type="palm"
+              duree={2400}
+              onFini={() => passerAEtapeSuivante(etape.idx)}
+            />
+          </>
         ) : null}
 
-        {step === "done" ? (
+        {etape.kind === "saving" ? (
+          <AnalyseSimulee type="palm" duree={1500} onFini={() => {}} />
+        ) : null}
+
+        {etape.kind === "done" ? (
           <AlertBox
             variant="success"
-            message="Empreinte de main enregistrée. Retour à l'accueil…"
+            message={`Deux paumes enregistrées — ${captures.length} captures. Retour à l'accueil…`}
           />
         ) : null}
 
-        {step === "error" ? (
+        {etape.kind === "error" ? (
           <>
-            <AlertBox
-              variant="error"
-              message={errorMsg ?? "Une erreur est survenue."}
+            <AlertBox variant="error" message={etape.message} />
+            <Button
+              label="Réessayer depuis le début"
+              onPress={() => {
+                setCaptures([]);
+                setEtape({ kind: "intro" });
+              }}
+              variant="primary"
             />
-            <View style={styles.actions}>
-              <Button
-                label="Réessayer"
-                onPress={() => {
-                  setErrorMsg(null);
-                  setCapturedUri(null);
-                  setStep("intro");
-                }}
-                variant="primary"
-              />
-            </View>
           </>
         ) : null}
       </ScrollView>
@@ -231,7 +259,7 @@ export default function PalmEnrolmentScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bgPrimary },
-  container: { padding: 24, gap: 20, paddingBottom: 40 },
+  container: { padding: 24, gap: 16, paddingBottom: 40 },
   header: { gap: 8 },
   back: { color: colors.fgTertiary, fontSize: 13 },
   title: { marginTop: 4 },
@@ -243,7 +271,33 @@ const styles = StyleSheet.create({
     color: colors.fgTertiary,
     lineHeight: 20,
   },
-  actions: { gap: 12 },
+  strong: {
+    color: colors.fgPrimary,
+    fontWeight: "700",
+  },
+
+  instructionCard: {
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 18,
+    borderWidth: 1.5,
+    borderColor: colors.cyan,
+    backgroundColor: "rgba(63,212,217,0.06)",
+  },
+  instructionLibelle: {
+    ...typography.eyebrow,
+    color: colors.cyan,
+    fontSize: 11,
+    letterSpacing: 1.5,
+  },
+  instructionTexte: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.fgPrimary,
+    textAlign: "center",
+    paddingHorizontal: 16,
+    lineHeight: 20,
+  },
 
   cameraWrap: {
     aspectRatio: 3 / 4,
@@ -253,26 +307,15 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   camera: { flex: 1 },
-  palmGuide: {
+  palm: {
     position: "absolute",
-    top: "12%",
-    left: "18%",
-    right: "18%",
-    bottom: "12%",
+    top: "10%",
+    left: "15%",
+    right: "15%",
+    bottom: "10%",
     borderWidth: 2,
     borderColor: colors.cyan,
     borderRadius: 32,
     opacity: 0.65,
   },
-
-  reviewImageWrap: {
-    aspectRatio: 3 / 4,
-    borderRadius: 20,
-    overflow: "hidden",
-    backgroundColor: colors.bgSecondary,
-  },
-  reviewImage: { flex: 1, width: "100%", height: "100%" },
-
-  centered: { alignItems: "center", paddingVertical: 32 },
-  savingText: { ...typography.body, color: colors.fgSecondary },
 });

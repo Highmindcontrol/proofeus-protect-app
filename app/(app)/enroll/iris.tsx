@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import {
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,21 +14,47 @@ import { colors } from "@/theme/colors";
 import { typography } from "@/theme/typography";
 import { useAuth } from "@/auth/context";
 import { saveIrisSample } from "@/biometrics/iris";
+import { AnalyseSimulee } from "@/components/AnalyseSimulee";
+import { BarreProgressionEnrolement } from "@/components/BarreProgressionEnrolement";
+import { CompteARebours } from "@/components/CompteARebours";
 
 /**
- * Écran d'enrôlement de l'iris — cinquième modalité biométrique (V0).
+ * Enrôlement iris — refonte UX 21 juillet 2026.
  *
- * V0 : capture photo cadrée sur les yeux via la caméra frontale +
- * hash SHA-256 comme empreinte préliminaire. Précision par caméra RGB
- * variable selon la couleur d'œil (70-90 %) — c'est pour cette raison
- * qu'on ne s'appuie jamais sur l'iris seul mais toujours en fusion
- * multi-modale avec les quatre autres signaux.
+ * Deux captures rapprochées séquentielles (œil gauche, œil droit)
+ * au lieu d'une capture unique des deux yeux à distance. Pattern :
+ *   - Compte à rebours 3-2-1
+ *   - Cadre ovale petit, forçant le rapprochement pour un iris net
+ *   - Analyse simulée entre les deux captures
+ *   - Barre de progression 1/2 puis 2/2
  *
- * V1 (à venir) : segmentation MediaPipe Iris + descripteur de Daugman
- * (2048 bits) via module natif OpenCV. Le UI ne changera pas.
+ * V2 : segmentation MediaPipe Iris + descripteur de Daugman 2048 bits.
  */
 
-type Step = "intro" | "camera" | "review" | "saving" | "done" | "error";
+type Oeil = "gauche" | "droit";
+
+const ETAPES: Array<{ oeil: Oeil; libelle: string; instruction: string }> = [
+  {
+    oeil: "gauche",
+    libelle: "Œil gauche",
+    instruction: "Fermez l'œil droit. Rapprochez la caméra de votre œil gauche jusqu'à ce qu'il remplisse le cadre.",
+  },
+  {
+    oeil: "droit",
+    libelle: "Œil droit",
+    instruction: "Fermez l'œil gauche. Rapprochez la caméra de votre œil droit jusqu'à ce qu'il remplisse le cadre.",
+  },
+];
+
+type Etape =
+  | { kind: "intro" }
+  | { kind: "positionnement"; idx: number }
+  | { kind: "rebours"; idx: number }
+  | { kind: "capture"; idx: number }
+  | { kind: "analyse"; idx: number }
+  | { kind: "saving" }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
 
 export default function IrisEnrolmentScreen() {
   const router = useRouter();
@@ -37,66 +62,87 @@ export default function IrisEnrolmentScreen() {
   const cameraRef = useRef<CameraView>(null);
 
   const [permission, requestPermission] = useCameraPermissions();
-  const [step, setStep] = useState<Step>("intro");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [etape, setEtape] = useState<Etape>({ kind: "intro" });
+  const [captures, setCaptures] = useState<Array<{ hash: string; oeil: Oeil }>>([]);
 
-  async function startFlow() {
-    setErrorMsg(null);
+  async function demarrer() {
     if (!permission?.granted) {
-      const req = await requestPermission();
-      if (!req.granted) {
-        setErrorMsg(
-          "L'accès à la caméra est nécessaire pour capturer votre iris. Autorisez-le dans les réglages de votre iPhone.",
-        );
-        setStep("error");
+      const r = await requestPermission();
+      if (!r.granted) {
+        setEtape({
+          kind: "error",
+          message: "L'accès à la caméra est nécessaire pour capturer vos iris.",
+        });
         return;
       }
     }
-    setStep("camera");
+    setEtape({ kind: "positionnement", idx: 0 });
   }
 
-  async function capturePhoto() {
+  async function capturerIris(idx: number) {
     try {
       if (!cameraRef.current) throw new Error("Caméra non prête");
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.9,
+        quality: 0.95,
         skipProcessing: false,
       });
       if (!photo?.uri) throw new Error("Aucune photo capturée");
-      setCapturedUri(photo.uri);
-      setStep("review");
+      const { hash } = await saveIrisSample(photo.uri, "reference");
+      setCaptures((prev) => [...prev, { hash, oeil: ETAPES[idx].oeil }]);
+      setEtape({ kind: "analyse", idx });
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de capture");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de capture",
+      });
     }
   }
 
-  async function saveAndFinalize() {
-    if (!capturedUri) return;
-    setStep("saving");
-    try {
-      await saveIrisSample(capturedUri, "reference");
+  function passerAEtapeSuivante(idx: number) {
+    if (idx >= ETAPES.length - 1) {
+      finaliser();
+    } else {
+      setEtape({ kind: "positionnement", idx: idx + 1 });
+    }
+  }
 
+  async function finaliser() {
+    setEtape({ kind: "saving" });
+    try {
       const currentStatus = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
       const { error } = await updateProfil({
         enrolment_status: {
           ...currentStatus,
           iris: {
             enrolled_at: new Date().toISOString(),
-            method: "photo-rgb",
-            samples: 1,
+            method: "photo-rgb-2-yeux",
+            samples: captures.length,
+            hashes: captures.reduce(
+              (acc, c) => ({ ...acc, [c.oeil]: c.hash }),
+              {} as Record<string, string>,
+            ),
           },
         },
       });
       if (error) throw new Error(error);
-      setStep("done");
-      setTimeout(() => router.replace("/home"), 900);
+      setEtape({ kind: "done" });
+      setTimeout(() => router.replace("/home"), 1200);
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Erreur de sauvegarde");
-      setStep("error");
+      setEtape({
+        kind: "error",
+        message: e instanceof Error ? e.message : "Erreur de sauvegarde",
+      });
     }
   }
+
+  const idxCourant =
+    etape.kind === "positionnement" ||
+    etape.kind === "rebours" ||
+    etape.kind === "capture" ||
+    etape.kind === "analyse"
+      ? etape.idx
+      : 0;
+  const etapeCourante = ETAPES[idxCourant];
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -107,122 +153,112 @@ export default function IrisEnrolmentScreen() {
           </Pressable>
           <Text style={typography.eyebrow}>Enrôlement · Iris</Text>
           <Text style={[typography.title, styles.title]}>
-            Votre empreinte oculaire.
+            Vos deux iris, séparément.
           </Text>
         </View>
 
-        {step === "intro" ? (
+        {etape.kind === "intro" ? (
           <>
             <Card style={styles.card}>
               <Text style={typography.eyebrow}>Comment ça marche</Text>
               <Text style={styles.hint}>
-                Placez votre visage à environ 25 cm de la caméra frontale,
-                dans un éclairage clair mais non éblouissant, regardez droit
-                vers l&apos;objectif.
+                Nous capturons vos deux iris <Text style={styles.strong}>séparément</Text>,
+                un œil après l&apos;autre, en approchant la caméra suffisamment
+                près pour que l&apos;iris remplisse le cadre. Cette approche
+                rapprochée donne un pattern rétinien beaucoup plus net qu&apos;une
+                photo des deux yeux à distance.
               </Text>
               <Text style={styles.hint}>
-                Nous capturons vos deux iris cadrés — la géométrie et le
-                pattern de vos iris sont uniques, comme des empreintes
-                digitales. La photo reste sur votre iPhone, seul un hash
-                cryptographique est calculé.
+                Prévoyez un bon éclairage — lumière naturelle idéale. Un iris
+                bien exposé montre son motif unique de couronne colorée
+                et de lignes radiales, aussi personnel qu&apos;une empreinte
+                digitale.
               </Text>
             </Card>
             <AlertBox
               variant="info"
-              message="La précision de l'iris par caméra frontale varie selon la couleur de vos yeux (70-90 %). Cette modalité n'est jamais utilisée seule — elle vient renforcer les autres signaux (voix, morphologie, paume, présence vivante) pour une fusion à plus de 99,5 %."
+              message="La précision iris par caméra RGB varie de 70 à 90 % selon la couleur d'œil. Cette modalité vient toujours en fusion multi-modale, jamais seule."
             />
-            <View style={styles.actions}>
-              <Button
-                label="Commencer l'enrôlement"
-                onPress={startFlow}
-                variant="primary"
-              />
-            </View>
+            <Button label="Commencer l'enrôlement" onPress={demarrer} variant="primary" />
           </>
         ) : null}
 
-        {step === "camera" ? (
+        {etape.kind === "positionnement" ||
+        etape.kind === "rebours" ||
+        etape.kind === "capture" ? (
           <>
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
+            />
+            <Card style={styles.instructionCard}>
+              <Text style={styles.instructionLibelle}>{etapeCourante.libelle}</Text>
+              <Text style={styles.instructionTexte}>{etapeCourante.instruction}</Text>
+            </Card>
             <View style={styles.cameraWrap}>
               <CameraView
                 ref={cameraRef}
                 style={styles.camera}
                 facing="front"
               />
-              <View style={styles.horizontalBand} pointerEvents="none">
-                <View style={styles.eyeSlot} />
-                <View style={styles.eyeSlot} />
-              </View>
+              <View style={styles.iris} pointerEvents="none" />
+              {etape.kind === "rebours" ? (
+                <CompteARebours
+                  duree={3}
+                  onFini={() => setEtape({ kind: "capture", idx: etape.idx })}
+                />
+              ) : null}
+              {etape.kind === "capture" ? (() => {
+                capturerIris(etape.idx);
+                return null;
+              })() : null}
             </View>
-            <Text style={styles.hint}>
-              Alignez vos deux yeux dans les repères cyan. Regardez droit vers
-              l&apos;objectif. Éclairage naturel de préférence.
-            </Text>
-            <View style={styles.actions}>
-              <Button label="Capturer" onPress={capturePhoto} variant="primary" />
-            </View>
-          </>
-        ) : null}
-
-        {step === "review" && capturedUri ? (
-          <>
-            <View style={styles.reviewImageWrap}>
-              <Image source={{ uri: capturedUri }} style={styles.reviewImage} />
-            </View>
-            <AlertBox
-              variant="info"
-              message="Votre photo de référence est capturée. Validez pour enregistrer votre empreinte, ou recommencez si vous n'êtes pas satisfait."
-            />
-            <View style={styles.actions}>
+            {etape.kind === "positionnement" ? (
               <Button
-                label="Valider l'empreinte"
-                onPress={saveAndFinalize}
+                label="Je suis prêt — démarrer la capture"
+                onPress={() => setEtape({ kind: "rebours", idx: idxCourant })}
                 variant="primary"
               />
-              <Button
-                label="Recommencer"
-                onPress={() => {
-                  setCapturedUri(null);
-                  setStep("camera");
-                }}
-                variant="secondary"
-              />
-            </View>
+            ) : null}
           </>
         ) : null}
 
-        {step === "saving" ? (
-          <View style={styles.centered}>
-            <Text style={styles.savingText}>
-              Enregistrement de votre empreinte oculaire…
-            </Text>
-          </View>
+        {etape.kind === "analyse" ? (
+          <>
+            <BarreProgressionEnrolement
+              etapeActuelle={idxCourant + 1}
+              etapes={ETAPES.map((e) => e.libelle)}
+            />
+            <AnalyseSimulee
+              type="iris"
+              duree={2400}
+              onFini={() => passerAEtapeSuivante(etape.idx)}
+            />
+          </>
         ) : null}
 
-        {step === "done" ? (
+        {etape.kind === "saving" ? (
+          <AnalyseSimulee type="iris" duree={1500} onFini={() => {}} />
+        ) : null}
+
+        {etape.kind === "done" ? (
           <AlertBox
             variant="success"
-            message="Empreinte oculaire enregistrée. Retour à l'accueil…"
+            message={`Deux iris enregistrés — ${captures.length} captures. Retour à l'accueil…`}
           />
         ) : null}
 
-        {step === "error" ? (
+        {etape.kind === "error" ? (
           <>
-            <AlertBox
-              variant="error"
-              message={errorMsg ?? "Une erreur est survenue."}
+            <AlertBox variant="error" message={etape.message} />
+            <Button
+              label="Réessayer depuis le début"
+              onPress={() => {
+                setCaptures([]);
+                setEtape({ kind: "intro" });
+              }}
+              variant="primary"
             />
-            <View style={styles.actions}>
-              <Button
-                label="Réessayer"
-                onPress={() => {
-                  setErrorMsg(null);
-                  setCapturedUri(null);
-                  setStep("intro");
-                }}
-                variant="primary"
-              />
-            </View>
           </>
         ) : null}
       </ScrollView>
@@ -232,7 +268,7 @@ export default function IrisEnrolmentScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bgPrimary },
-  container: { padding: 24, gap: 20, paddingBottom: 40 },
+  container: { padding: 24, gap: 16, paddingBottom: 40 },
   header: { gap: 8 },
   back: { color: colors.fgTertiary, fontSize: 13 },
   title: { marginTop: 4 },
@@ -244,7 +280,33 @@ const styles = StyleSheet.create({
     color: colors.fgTertiary,
     lineHeight: 20,
   },
-  actions: { gap: 12 },
+  strong: {
+    color: colors.fgPrimary,
+    fontWeight: "700",
+  },
+
+  instructionCard: {
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 18,
+    borderWidth: 1.5,
+    borderColor: colors.cyan,
+    backgroundColor: "rgba(63,212,217,0.06)",
+  },
+  instructionLibelle: {
+    ...typography.eyebrow,
+    color: colors.cyan,
+    fontSize: 11,
+    letterSpacing: 1.5,
+  },
+  instructionTexte: {
+    ...typography.body,
+    fontSize: 14,
+    color: colors.fgPrimary,
+    textAlign: "center",
+    paddingHorizontal: 16,
+    lineHeight: 20,
+  },
 
   cameraWrap: {
     aspectRatio: 4 / 3,
@@ -254,33 +316,15 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   camera: { flex: 1 },
-  horizontalBand: {
+  iris: {
     position: "absolute",
-    top: "35%",
-    left: 0,
-    right: 0,
-    height: "30%",
-    flexDirection: "row",
-    justifyContent: "space-evenly",
-    alignItems: "center",
-  },
-  eyeSlot: {
-    width: "30%",
-    height: "100%",
-    borderWidth: 2,
+    top: "20%",
+    left: "30%",
+    right: "30%",
+    bottom: "20%",
+    borderWidth: 2.5,
     borderColor: colors.cyan,
-    borderRadius: 999,
-    opacity: 0.75,
+    borderRadius: 9999,
+    opacity: 0.85,
   },
-
-  reviewImageWrap: {
-    aspectRatio: 4 / 3,
-    borderRadius: 20,
-    overflow: "hidden",
-    backgroundColor: colors.bgSecondary,
-  },
-  reviewImage: { flex: 1, width: "100%", height: "100%" },
-
-  centered: { alignItems: "center", paddingVertical: 32 },
-  savingText: { ...typography.body, color: colors.fgSecondary },
 });
