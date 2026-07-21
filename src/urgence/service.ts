@@ -99,9 +99,18 @@ export async function supprimerContact(id: string): Promise<void> {
 
 /**
  * Renvoie tous les cercles auxquels l'utilisateur appartient — comme
- * créateur ou comme membre invité/accepté.
+ * créateur ou comme membre invité/accepté. Rattache d'abord toutes les
+ * invitations en attente qui correspondent à l'email du user courant
+ * (cas : user déjà inscrit avant d'être invité — le trigger auth.users
+ * ne se déclenche pas dans ce cas, il faut rattacher explicitement).
  */
 export async function listerMesCercles(): Promise<Cercle[]> {
+  // Best effort : rattache silencieusement les invitations en attente
+  try {
+    await supabase.rpc("rattacher_mes_cercles");
+  } catch {
+    // silencieux — la fonction RPC peut ne pas être encore déployée
+  }
   const { data, error } = await supabase.from("cercles").select("*");
   if (error) throw new Error(error.message);
   return (data ?? []) as Cercle[];

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
+import { supabase } from "@/supabase/client";
 import {
   Alert,
   Pressable,
@@ -88,6 +89,16 @@ export default function CercleScreen() {
   const [pingEntrant, setPingEntrant] = useState<Ping | null>(null);
   const [pingSortant, setPingSortant] = useState<Ping | null>(null);
   const [enEnvoiPing, setEnEnvoiPing] = useState(false);
+
+  // ID du user courant — nécessaire pour distinguer « moi » vs « les
+  // autres membres » lors du rendu des boutons Ping.
+  const [monUserId, setMonUserId] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase.auth.getSession();
+      setMonUserId(data.session?.user?.id ?? null);
+    })();
+  }, []);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -288,10 +299,9 @@ export default function CercleScreen() {
   }
 
   const cercle = cercles[0];
-  const monEmail = membres.find(
-    (m) => m.role === "createur" && m.cercle_id === cercle?.id,
+  const suisCreateur = Boolean(
+    cercle && monUserId && cercle.createur_id === monUserId,
   );
-  const suisCreateur = cercle && monEmail !== undefined;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -475,7 +485,7 @@ export default function CercleScreen() {
               </View>
               <View style={{ gap: 10 }}>
                 {membres.map((m) => {
-                  const estMoi = m.user_id === (cercle?.createur_id ?? null) && m.role === "createur";
+                  const estMoi = monUserId != null && m.user_id === monUserId;
                   const equipe = Boolean(m.user_id);
                   return (
                     <View key={m.id} style={styles.membreRow}>
