@@ -1,5 +1,6 @@
 import * as Crypto from "expo-crypto";
 import { supabase } from "@/supabase/client";
+import { calculerScoreConfiance, type ScoreConfiance } from "@/scoring/service";
 
 /**
  * Génération de preuves d'humanité éphémères pour Proofeus Protect.
@@ -39,6 +40,7 @@ export type Preuve = {
   expiresAt: Date;
   createdAt: Date;
   urlVerification: string;
+  score: ScoreConfiance;
 };
 
 const DUREE_VIE_MS = 60_000; // 60 secondes
@@ -65,6 +67,18 @@ export async function creerPreuve(contexte: Contexte = "presence"): Promise<Preu
     throw new Error("Vous devez être connecté pour émettre une preuve.");
   }
 
+  // Lecture du profil pour calculer le score de confiance au moment
+  // de l'émission (le score reste figé pour cette preuve précise,
+  // même si l'utilisateur ajoute une modalité après)
+  const { data: profil } = await supabase
+    .from("protect_users")
+    .select("enrolment_status")
+    .eq("auth_id", userId)
+    .maybeSingle();
+
+  const enrolment = (profil?.enrolment_status ?? {}) as Record<string, unknown>;
+  const score = calculerScoreConfiance(enrolment);
+
   const code = await genererCode();
   const maintenant = new Date();
   const expiresAt = new Date(maintenant.getTime() + DUREE_VIE_MS);
@@ -76,6 +90,12 @@ export async function creerPreuve(contexte: Contexte = "presence"): Promise<Preu
       code,
       contexte,
       expires_at: expiresAt.toISOString(),
+      metadonnees: {
+        score_confiance: score.score,
+        niveau: score.niveau,
+        libelle_niveau: score.libelleNiveau,
+        modalites_actives: score.modalitesActives,
+      },
     })
     .select("id, code, contexte, expires_at, created_at")
     .single();
@@ -91,6 +111,7 @@ export async function creerPreuve(contexte: Contexte = "presence"): Promise<Preu
     expiresAt: new Date(data.expires_at),
     createdAt: new Date(data.created_at),
     urlVerification: `${URL_BASE}${data.code}`,
+    score,
   };
 }
 

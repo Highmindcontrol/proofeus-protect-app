@@ -7,6 +7,7 @@ import { AlertBox, Button, Card } from "@/components/ui";
 import { colors } from "@/theme/colors";
 import { typography } from "@/theme/typography";
 import { creerPreuve, statutPreuve, type Preuve } from "@/preuves/generateur";
+import { couleurNiveau, LIBELLE_MODALITE } from "@/scoring/service";
 
 /**
  * Écran « Générer une preuve d'humanité » — cœur produit de Proofeus.
@@ -168,6 +169,39 @@ export default function PreuveScreen() {
               </View>
             ) : null}
 
+            <View style={styles.scoreWrap}>
+              <View style={styles.scoreHeader}>
+                <Text style={styles.scoreLabel}>Niveau de confiance</Text>
+                <Text
+                  style={[
+                    styles.scoreValue,
+                    { color: couleurNiveau(preuve.score.niveau) },
+                  ]}
+                >
+                  {preuve.score.score.toFixed(2)} %
+                </Text>
+              </View>
+              <View style={styles.scoreBarreTrack}>
+                <View
+                  style={[
+                    styles.scoreBarreFill,
+                    {
+                      width: `${Math.min(100, preuve.score.score)}%`,
+                      backgroundColor: couleurNiveau(preuve.score.niveau),
+                    },
+                  ]}
+                />
+              </View>
+              <Text style={styles.scoreLibelle}>{preuve.score.libelleNiveau}</Text>
+              <Text style={styles.scoreDetail}>
+                Fusion de {preuve.score.modalitesActives.length} modalité
+                {preuve.score.modalitesActives.length > 1 ? "s" : ""} :{" "}
+                {preuve.score.modalitesActives
+                  .map((m) => LIBELLE_MODALITE[m])
+                  .join(" · ")}
+              </Text>
+            </View>
+
             <View style={styles.metaWrap}>
               <Text style={styles.metaLabel}>URL scannée</Text>
               <Text style={styles.metaValue} numberOfLines={1}>
@@ -308,6 +342,55 @@ const styles = StyleSheet.create({
     color: colors.fgSecondary,
     textAlign: "center",
     fontVariant: ["tabular-nums"],
+  },
+  scoreWrap: {
+    width: "100%",
+    padding: 14,
+    backgroundColor: "rgba(63,212,217,0.05)",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(63,212,217,0.2)",
+    gap: 8,
+  },
+  scoreHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+  },
+  scoreLabel: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    fontSize: 10,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  scoreValue: {
+    ...typography.body,
+    fontSize: 20,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+  },
+  scoreBarreTrack: {
+    height: 6,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 999,
+    overflow: "hidden",
+  },
+  scoreBarreFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
+  scoreLibelle: {
+    ...typography.body,
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.fgPrimary,
+  },
+  scoreDetail: {
+    ...typography.caption,
+    color: colors.fgTertiary,
+    fontSize: 11,
+    lineHeight: 16,
   },
   metaWrap: {
     width: "100%",
