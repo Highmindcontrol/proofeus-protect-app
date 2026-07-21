@@ -31,22 +31,23 @@ export function PingListenerGlobal() {
   const pingEntrantRef = useRef<Ping | null>(null);
   pingEntrantRef.current = pingEntrant;
 
-  // Ids des pings que l'utilisateur a explicitement reportés durant
-  // cette session — on ne les affiche plus tant qu'ils sont en_attente.
-  const pingsReportesRef = useRef<Set<string>>(new Set());
+  // Ids des pings déjà traités durant cette session (confirmés,
+  // refusés OU reportés). Ceinture + bretelles contre la boucle
+  // d'affichage : même si le serveur retourne encore le ping (cache
+  // Supabase, latence de propagation, RLS qui bloque silencieusement
+  // l'UPDATE, etc.), on ne le ré-affiche plus une fois traité.
+  const pingsTraitesRef = useRef<Set<string>>(new Set());
 
   const surRepondu = useCallback(() => {
-    // Le ping vient d'être confirmé ou refusé côté serveur : il ne
-    // sortira plus des prochains polls (statut != en_attente), pas
-    // besoin de le mémoriser localement.
+    if (pingEntrantRef.current) {
+      pingsTraitesRef.current.add(pingEntrantRef.current.id);
+    }
     setPingEntrant(null);
   }, []);
 
   const surFerme = useCallback(() => {
-    // « Décider plus tard » — on mémorise pour éviter la boucle
-    // d'affichage tant que le ping reste en_attente.
     if (pingEntrantRef.current) {
-      pingsReportesRef.current.add(pingEntrantRef.current.id);
+      pingsTraitesRef.current.add(pingEntrantRef.current.id);
     }
     setPingEntrant(null);
   }, []);
@@ -59,7 +60,7 @@ export function PingListenerGlobal() {
         const pings = await listerPingsEntrants();
         if (annule) return;
         if (pingEntrantRef.current) return;
-        const suivant = pings.find((p) => !pingsReportesRef.current.has(p.id));
+        const suivant = pings.find((p) => !pingsTraitesRef.current.has(p.id));
         if (suivant) setPingEntrant(suivant);
       } catch {
         // silencieux — retente au prochain intervalle

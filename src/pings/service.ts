@@ -31,7 +31,10 @@ export type Ping = {
 };
 
 /**
- * Envoie un ping de vérification à un membre du cercle.
+ * Envoie un ping de vérification à un membre du cercle. Si un ping en
+ * attente existe déjà entre les mêmes deux personnes dans ce cercle,
+ * on le réutilise plutôt que d'en créer un nouveau — évite l'empilement
+ * de modals à chaque clic répété sur « Pinger ».
  */
 export async function envoyerPing(input: {
   cercleId: string;
@@ -41,6 +44,19 @@ export async function envoyerPing(input: {
   const { data: session } = await supabase.auth.getSession();
   const userId = session.session?.user?.id;
   if (!userId) throw new Error("Vous devez être connecté.");
+
+  // Dedup : réutiliser un ping en_attente existant
+  const maintenant = new Date().toISOString();
+  const { data: dejaOuvert } = await supabase
+    .from("pings_verification")
+    .select("*")
+    .eq("cercle_id", input.cercleId)
+    .eq("emetteur_id", userId)
+    .eq("destinataire_id", input.destinataireUserId)
+    .eq("statut", "en_attente")
+    .gt("expires_at", maintenant)
+    .maybeSingle();
+  if (dejaOuvert) return dejaOuvert as Ping;
 
   // Récupérer le prénom de l'émetteur pour personnaliser côté destinataire
   const { data: profil } = await supabase
@@ -109,30 +125,43 @@ export async function relirePing(pingId: string): Promise<Ping | null> {
 
 /**
  * Le destinataire confirme le ping (après validation Face ID côté app).
+ * Vérifie que la ligne a bien été mise à jour côté serveur (si la RLS
+ * bloque silencieusement, on lève une erreur explicite au lieu de
+ * laisser croire à un succès).
  */
 export async function confirmerPing(pingId: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("pings_verification")
     .update({
       statut: "confirme",
       validation_face_id: true,
       repondu_at: new Date().toISOString(),
     })
-    .eq("id", pingId);
+    .eq("id", pingId)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error(
+      "Impossible de confirmer ce ping (peut-être n'êtes-vous pas le destinataire, ou le ping a-t-il été retiré).",
+    );
+  }
 }
 
 /**
  * Le destinataire refuse le ping (bouton « Ce n'est pas moi »).
  */
 export async function refuserPing(pingId: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("pings_verification")
     .update({
       statut: "refuse",
       validation_face_id: false,
       repondu_at: new Date().toISOString(),
     })
-    .eq("id", pingId);
+    .eq("id", pingId)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("Impossible de refuser ce ping (droits insuffisants).");
+  }
 }
